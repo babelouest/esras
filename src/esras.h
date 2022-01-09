@@ -28,17 +28,25 @@
 #define _ESRAS_VERSION_ "0.0.1"
 
 /** Angharad libraries **/
-#include <ulfius.h>
 #include <yder.h>
+#include <ulfius.h>
 #include <hoel.h>
+#include <rhonabwy.h>
+#include <iddawc.h>
 
-#include "iddawc_resource.h"
 #include "static_compressed_inmemory_website_callback.h"
 #include "http_compression_callback.h"
 
-#define ESRAS_DEFAULT_PORT   3777
-#define ESRAS_DEFAULT_PREFIX "api"
-#define ESRAS_LOG_NAME       "ESRAS"
+#define ESRAS_DEFAULT_PORT               3777
+#define ESRAS_DEFAULT_PREFIX             "api"
+#define ESRAS_DEFAULT_INDEX              "index.html"
+#define ESRAS_DEFAULT_SESSION_EXPIRATION 604800
+#define ESRAS_SESSION_LENGTH             128
+#define ESRAS_LOG_NAME                   "ESRAS"
+#define ESRAS_DEFAULT_TOKEN_EXPIRE       3600
+
+#define ESRAS_TABLE_PROFILE "e_profile"
+#define ESRAS_TABLE_SESSION "e_session"
 
 #define ESRAS_STOP     0
 #define ESRAS_ERROR    1
@@ -72,8 +80,8 @@
 struct config_elements {
   char                                         * config_file;
   unsigned int                                   port;
-  char                                         * external_url;
   char                                         * api_prefix;
+  char                                         * index_url;
   unsigned long                                  log_mode;
   unsigned long                                  log_level;
   char                                         * log_file;
@@ -81,18 +89,34 @@ struct config_elements {
   unsigned int                                   use_secure_connection;
   char                                         * secure_connection_key_file;
   char                                         * secure_connection_pem_file;
+  char                                         * session_key;
+  time_t                                         session_expiration;
+  char                                         * cookie_domain;
+  unsigned int                                   cookie_secure;
   char                                         * oidc_server_remote_config;
-  unsigned int                                   oidc_server_remote_config_verify_cert;
+  char                                         * oidc_server_auth_endpoint;
+  char                                         * oidc_server_token_endpoint;
+  unsigned int                                   oidc_server_verify_cert;
   char                                         * oidc_server_public_jwks;
   char                                         * oidc_scope;
   char                                         * oidc_iss;
   char                                         * oidc_realm;
   char                                         * oidc_aud;
   time_t                                         oidc_dpop_max_iat;
+  char                                         * oidc_name_claim;
+  unsigned int                                   oidc_is_jwt_access_token;
+  char                                         * client_id;
+  char                                         * client_redirect_uri;
+  char                                         * client_secret;
+  jwk_t                                        * client_secret_key;
+  unsigned int                                   client_auth_method;
+  unsigned int                                   client_token_auth_method;
+  char                                         * client_sign_alg;
   struct _h_connection                         * conn;
   struct _u_instance                           * instance;
-  struct _iddawc_resource_config               * iddawc_resource_config;
 	struct _u_compressed_inmemory_website_config * static_file_config;
+  struct _i_session                            * i_session;
+  pthread_mutex_t                                i_session_lock;
 };
 
 // Main functions and misc functions
@@ -107,12 +131,21 @@ char * get_file_content(const char * file_path);
 char * url_decode(char *str);
 char * url_encode(char *str);
 const char * get_ip_source(const struct _u_request * request);
+int generate_hash(const char * data, char * output);
+char * rand_string(char * str, size_t str_size);
+char * rand_string_from_charset(char * str, size_t str_size, const char * charset);
 
 int check_result_value(json_t * result, const int value);
 
+json_t * check_session(struct config_elements * config, const char * session_id);
+json_t * init_session(struct config_elements * config, const char * cur_session_id, int create);
+int validate_session_code(struct config_elements * config, const char * session_id, const char * state, const char * code);
+
 int callback_esras_options (const struct _u_request * request, struct _u_response * response, void * user_data);
-int callback_esras_server_configuration (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_default (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_404_if_necessary (const struct _u_request * request, struct _u_response * response, void * user_data);
+
+int callback_esras_check_session (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_callback_url (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 #endif

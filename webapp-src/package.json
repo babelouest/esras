@@ -4,7 +4,7 @@
 	"description": "OAuth2/OIDC client",
 	"main": "src/index.js",
 	"author": "Nicolas Mora",
-	"license": "ISC",
+	"license": "AGPL",
 	"scripts": {
 		"dev": "webpack serve --config ./webpack.config.js --mode development",
 		"build": "webpack --mode production",

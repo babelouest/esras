@@ -37,16 +37,6 @@ int callback_esras_options (const struct _u_request * request, struct _u_respons
   return U_CALLBACK_COMPLETE;
 }
 
-/**
- * api description endpoint
- * send the location of prefixes
- */
-int callback_esras_server_configuration (const struct _u_request * request, struct _u_response * response, void * user_data) {
-  UNUSED(request);
-  struct config_elements * config = (struct config_elements *)user_data;
-  return U_CALLBACK_CONTINUE;
-};
-
 int callback_default (const struct _u_request * request, struct _u_response * response, void * user_data) {
   UNUSED(request);
   UNUSED(user_data);
@@ -60,6 +50,62 @@ int callback_404_if_necessary (const struct _u_request * request, struct _u_resp
   UNUSED(user_data);
   if (!request->callback_position) {
     response->status = 404;
+  }
+  return U_CALLBACK_COMPLETE;
+}
+
+int callback_esras_check_session (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  int ret = U_CALLBACK_IGNORE;
+  json_t * j_session = check_session(config, u_map_get(request->map_cookie, config->session_key)), * j_result;
+  char expires[129];
+  time_t now;
+  struct tm ts;
+  
+  time(&now);
+  now += config->session_expiration;
+  gmtime_r(&now, &ts);
+  strftime(expires, 128, "%a, %d %b %Y %T %Z", &ts);  
+  if (check_result_value(j_session, E_ERROR_UNAUTHORIZED) || check_result_value(j_session, E_ERROR_NOT_FOUND)) {
+    j_result = init_session(config, u_map_get(request->map_cookie, config->session_key), check_result_value(j_session, E_ERROR_NOT_FOUND));
+    if (check_result_value(j_result, E_OK)) {
+      ulfius_add_cookie_to_response(response, config->session_key, json_string_value(json_object_get(json_object_get(j_result, "session"), "session_id")), expires, 0, config->cookie_domain, "/", config->cookie_secure, 0);
+      u_map_put(response->map_header, "Location", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+      response->status = 302;
+      ret = U_CALLBACK_COMPLETE;
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_check_session - Error init_session");
+      ret = U_CALLBACK_ERROR;
+    }
+    json_decref(j_result);
+  } else if (check_result_value(j_session, E_OK)) {
+    ulfius_set_response_shared_data(response, json_incref(json_object_get(j_session, "session")), (void (*)(void *))&json_decref);
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_check_session - Error check_session");
+    ret = U_CALLBACK_ERROR;
+  }
+  json_decref(j_session);
+  return ret;
+}
+
+int callback_esras_callback_url (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  int res;
+
+  if (o_strlen(u_map_get(request->map_url, "code")) &&
+      o_strlen(u_map_get(request->map_url, "state")) &&
+      o_strlen(u_map_get(request->map_cookie, config->session_key)) == ESRAS_SESSION_LENGTH) {
+    if ((res = validate_session_code(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "state"), u_map_get(request->map_url, "code"))) == E_OK) {
+      u_map_put(response->map_header, "Location", config->index_url);
+      response->status = 302;
+    } else if (res == E_ERROR_UNAUTHORIZED) {
+      ulfius_set_string_body_response(response, 400, "Invalid request");
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_callback_url - Error validate_session_code");
+      response->status = 500;
+    }
+  } else {
+    ulfius_set_string_body_response(response, 400, "Invalid request");
   }
   return U_CALLBACK_COMPLETE;
 }

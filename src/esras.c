@@ -28,6 +28,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
 
 #include "esras.h"
 
@@ -45,8 +47,9 @@ pthread_cond_t  global_handler_close_cond;
 int main (int argc, char ** argv) {
   struct config_elements * config = o_malloc(sizeof(struct config_elements));
   int res;
-  char * str_jwks;
-  json_t * j_jwks;
+  char * jwks_str;
+  jwks_t * jwks_pubkey;
+  pthread_mutexattr_t mutexattr;
   
   srand(time(NULL));
   if (config == NULL) {
@@ -57,29 +60,44 @@ int main (int argc, char ** argv) {
   // Init config structure with default values
   config->config_file = NULL;
   config->port = ESRAS_DEFAULT_PORT;
-  config->external_url = NULL;
   config->api_prefix = o_strdup(ESRAS_DEFAULT_PREFIX);
+  config->index_url = o_strdup(ESRAS_DEFAULT_INDEX);
   config->log_mode = Y_LOG_MODE_NONE;
   config->log_level = Y_LOG_LEVEL_NONE;
   config->log_file = NULL;
   config->conn = NULL;
   config->instance = o_malloc(sizeof(struct _u_instance));
   config->allow_origin = NULL;
-  config->iddawc_resource_config = o_malloc(sizeof(struct _iddawc_resource_config));
   config->static_file_config = o_malloc(sizeof(struct _u_compressed_inmemory_website_config));
+  config->i_session = o_malloc(sizeof(struct _i_session));
   config->use_secure_connection = 0;
   config->secure_connection_key_file = NULL;
   config->secure_connection_pem_file = NULL;
+  config->session_key = NULL;
+  config->session_expiration = ESRAS_DEFAULT_SESSION_EXPIRATION;
+  config->cookie_domain = NULL;
+  config->cookie_secure = 1;
   config->oidc_server_remote_config = NULL;
-  config->oidc_server_remote_config_verify_cert = 1;
+  config->oidc_server_auth_endpoint = NULL;
+  config->oidc_server_token_endpoint = NULL;
+  config->oidc_server_verify_cert = 1;
   config->oidc_server_public_jwks = NULL;
   config->oidc_scope = NULL;
   config->oidc_iss = NULL;
   config->oidc_realm = NULL;
   config->oidc_aud = NULL;
   config->oidc_dpop_max_iat = 0;
-  if (config->instance == NULL || config->iddawc_resource_config == NULL || config->static_file_config == NULL) {
-    fprintf(stderr, "Memory error - config->instance || config->iddawc_resource_config || config->static_file_config\n");
+  config->oidc_name_claim = NULL;
+  config->oidc_is_jwt_access_token = 0;
+  config->client_id = NULL;
+  config->client_redirect_uri = NULL;
+  config->client_secret = NULL;
+  config->client_secret_key = NULL;
+  config->client_auth_method = I_TOKEN_AUTH_METHOD_SECRET_BASIC;
+  config->client_token_auth_method = I_AUTH_METHOD_GET;
+  config->client_sign_alg = NULL;
+  if (config->instance == NULL || config->static_file_config == NULL || config->i_session == NULL) {
+    fprintf(stderr, "Memory error - config->instance || config->static_file_config || config->i_session\n");
     o_free(config);
     return 1;
   }
@@ -100,78 +118,105 @@ int main (int argc, char ** argv) {
   }
   u_map_put(&config->static_file_config->mime_types, "*", "application/octet-stream");
 
+  if (i_init_session(config->i_session) != I_OK) {
+    fprintf(stderr, "Error i_init_session\n");
+    print_help(stderr);
+    exit_server(&config, ESRAS_ERROR);
+  }
+
   // First we parse command line arguments
   if (!build_config_from_args(argc, argv, config)) {
     fprintf(stderr, "Error reading command-line parameters\n");
     print_help(stderr);
     exit_server(&config, ESRAS_ERROR);
   }
-  
+
   // Then we parse configuration file
   // They have lower priority than command line parameters
   if (!build_config_from_file(config)) {
     fprintf(stderr, "Error config file\n");
     exit_server(&config, ESRAS_ERROR);
   }
-  
+
   // Check if all mandatory configuration variables are present and correctly typed
   if (!check_config(config)) {
     fprintf(stderr, "Error initializing configuration\n");
     exit_server(&config, ESRAS_ERROR);
   }
 
-  i_global_init();
-  
   if (!y_init_logs(ESRAS_LOG_NAME, config->log_mode, config->log_level, config->log_file, "Starting Esras Server")) {
     fprintf(stderr, "Error initializing logs\n");
     exit_server(&config, ESRAS_ERROR);
   }
-  
-  if (i_jwt_profile_access_token_init_config(config->iddawc_resource_config, I_METHOD_HEADER, NULL, NULL, config->oidc_scope, NULL, 1, 1, config->oidc_dpop_max_iat) == I_TOKEN_OK) {
-    if (config->oidc_server_remote_config != NULL) {
-      if (!i_jwt_profile_access_token_load_config(config->iddawc_resource_config, config->oidc_server_remote_config, config->oidc_server_remote_config_verify_cert)) {
-        y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error i_jwt_profile_access_token_load_config");
-        exit_server(&config, ESRAS_ERROR);
-      }
-      y_log_message(Y_LOG_LEVEL_INFO, "OIDC authentication - Load remote authentification config: %s", config->oidc_server_remote_config);
-    } else if (config->oidc_server_public_jwks != NULL) {
-      res = 1;
-      if ((str_jwks = get_file_content(config->oidc_server_public_jwks)) != NULL) {
-        if ((j_jwks = json_loads(str_jwks, JSON_DECODE_ANY, NULL)) != NULL) {
-          if (!i_jwt_profile_access_token_load_jwks(config->iddawc_resource_config, j_jwks, config->oidc_iss)) {
-            y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error i_jwt_profile_access_token_load_jwks");
-          }
-        } else {
-          y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error parsing jwks");
-          res = 0;
-        }
-        json_decref(j_jwks);
-      } else {
-        y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error reading jwks file");
-        res = 0;
-      }
-      o_free(str_jwks);
-      if (!res) {
-        exit_server(&config, ESRAS_ERROR);
-      }
-      y_log_message(Y_LOG_LEVEL_INFO, "OIDC authentication - Load signature key from file: %s", config->oidc_server_public_jwks);
-    } else {
-      y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error oidc config");
+
+  if (!config->oidc_server_verify_cert) {
+    i_set_int_parameter(config->i_session, I_OPT_REMOTE_CERT_FLAG, I_REMOTE_VERIFY_NONE);
+  }
+  if (o_strlen(config->oidc_server_remote_config)) {
+    if (i_set_str_parameter(config->i_session, I_OPT_OPENID_CONFIG_ENDPOINT, config->oidc_server_remote_config) != I_OK || i_get_openid_config(config->i_session) != I_OK) {
+      fprintf(stderr, "Error initializing i_session\n");
       exit_server(&config, ESRAS_ERROR);
+    } else {
+      y_log_message(Y_LOG_LEVEL_INFO, "Loading OpenID Config Endpoint %s", config->oidc_server_remote_config);
     }
   } else {
-    y_log_message(Y_LOG_LEVEL_ERROR, "OIDC authentication - Error i_jwt_profile_access_token_init_config");
+    if (i_set_parameter_list(config->i_session, I_OPT_AUTH_ENDPOINT, config->oidc_server_auth_endpoint,
+                                                I_OPT_TOKEN_ENDPOINT, config->oidc_server_token_endpoint,
+                                                I_OPT_ISSUER, config->oidc_iss,
+                                                I_OPT_NONE) != I_OK) {
+      fprintf(stderr, "Error initializing i_session AS parameters list\n");
+      exit_server(&config, ESRAS_ERROR);
+    }
+    jwks_str = get_file_content(config->oidc_server_public_jwks);
+    jwks_pubkey = r_jwks_quick_import(R_IMPORT_JSON_STR, jwks_str, R_IMPORT_NONE);
+    if (jwks_pubkey != NULL) {
+      if (i_set_server_jwks(config->i_session, jwks_pubkey) != I_OK) {
+        fprintf(stderr, "Error setting server_public_jwks\n");
+        exit_server(&config, ESRAS_ERROR);
+      }
+    } else {
+      fprintf(stderr, "Error initializing server_public_jwks\n");
+      exit_server(&config, ESRAS_ERROR);
+    }
+    o_free(jwks_str);
+    r_jwks_free(jwks_pubkey);
+  }
+  if (i_set_parameter_list(config->i_session, I_OPT_CLIENT_ID, config->client_id,
+                                              I_OPT_REDIRECT_URI, config->client_redirect_uri,
+                                              I_OPT_CLIENT_SECRET, config->client_secret,
+                                              I_OPT_AUTH_METHOD, config->client_auth_method,
+                                              I_OPT_TOKEN_METHOD, config->client_token_auth_method,
+                                              I_OPT_CLIENT_SIGN_ALG, config->client_sign_alg,
+                                              I_OPT_SCOPE, config->oidc_scope,
+                                              I_OPT_SCOPE_APPEND, "openid",
+                                              I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CODE,
+                                              I_OPT_NONE) != I_OK) {
+    fprintf(stderr, "Error initializing i_session client parameters list\n");
+    exit_server(&config, ESRAS_ERROR);
+  } else {
+    y_log_message(Y_LOG_LEVEL_INFO, "Setting client parameters");
+  }
+                                              
+  ulfius_init_instance(config->instance, config->port, NULL, NULL);
+  
+  pthread_mutexattr_init ( &mutexattr );
+  pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
+  if (pthread_mutex_init(&config->i_session_lock, &mutexattr) != 0) {
+    fprintf(stderr, "Error initializing insert mutex\n");
     exit_server(&config, ESRAS_ERROR);
   }
+  pthread_mutexattr_destroy(&mutexattr);
 
-  ulfius_init_instance(config->instance, config->port, NULL, NULL);
+  // Everything is under the protection of the session
+  ulfius_add_endpoint_by_val(config->instance, "*", NULL, "*", ESRAS_CALLBACK_PRIORITY_AUTHENTICATION, &callback_esras_check_session, config);
+  
+  // Except for the callback
+  ulfius_add_endpoint_by_val(config->instance, "GET", NULL, "callback", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_callback_url, config);
   
   // At this point, we declare all API endpoints and configure 
   
   // Other endpoints
-  ulfius_add_endpoint_by_val(config->instance, "*", config->api_prefix, "*", ESRAS_CALLBACK_PRIORITY_AUTHENTICATION, &callback_check_jwt_profile_access_token, config->iddawc_resource_config);
   ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
-  ulfius_add_endpoint_by_val(config->instance, "GET", "/.well-known/esras-configuration", NULL, ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_server_configuration, (void*)config);
   ulfius_add_endpoint_by_val(config->instance, "OPTIONS", NULL, "*", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_options, (void*)config);
   ulfius_add_endpoint_by_val(config->instance, "*", config->api_prefix, "*", ESRAS_CALLBACK_PRIORITY_COMPRESSION, &callback_http_compression, NULL);
   ulfius_add_endpoint_by_val(config->instance, "GET", NULL, "*", ESRAS_CALLBACK_PRIORITY_POST_FILE, &callback_404_if_necessary, NULL);
@@ -182,8 +227,9 @@ int main (int argc, char ** argv) {
   u_map_put(config->instance->default_headers, "Access-Control-Allow-Credentials", "true");
   u_map_put(config->instance->default_headers, "Cache-Control", "no-store");
   u_map_put(config->instance->default_headers, "Pragma", "no-cache");
+  u_map_put(config->instance->default_headers, "X-Frame-Options", "deny");
 
-  y_log_message(Y_LOG_LEVEL_INFO, "Start esras on port %d, prefix: %s, secure: %s, scope %s, external url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->iddawc_resource_config->oauth_scope, config->external_url);
+  y_log_message(Y_LOG_LEVEL_INFO, "Start Esras on port %d, prefix: %s, secure: %s, scope %s, index url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->oidc_scope, config->index_url);
 
   if (config->use_secure_connection) {
     char * key_file = get_file_content(config->secure_connection_key_file);
@@ -224,19 +270,26 @@ void exit_server(struct config_elements ** config, int exit_value) {
     // Cleaning data
     o_free((*config)->config_file);
     o_free((*config)->api_prefix);
-    o_free((*config)->external_url);
+    o_free((*config)->index_url);
     o_free((*config)->log_file);
+    o_free((*config)->session_key);
     o_free((*config)->allow_origin);
     o_free((*config)->secure_connection_key_file);
     o_free((*config)->secure_connection_pem_file);
-    i_jwt_profile_access_token_close_config((*config)->iddawc_resource_config);
     o_free((*config)->oidc_server_remote_config);
+    o_free((*config)->oidc_server_auth_endpoint);
+    o_free((*config)->oidc_server_token_endpoint);
     o_free((*config)->oidc_server_public_jwks);
     o_free((*config)->oidc_scope);
     o_free((*config)->oidc_iss);
     o_free((*config)->oidc_realm);
     o_free((*config)->oidc_aud);
-    o_free((*config)->iddawc_resource_config);
+    o_free((*config)->oidc_name_claim);
+    o_free((*config)->client_id);
+    o_free((*config)->client_redirect_uri);
+    o_free((*config)->client_secret);
+    o_free((*config)->client_sign_alg);
+    r_jwk_free((*config)->client_secret_key);
     
     o_free((*config)->static_file_config->files_path);
     o_free((*config)->static_file_config->url_prefix);
@@ -246,13 +299,15 @@ void exit_server(struct config_elements ** config, int exit_value) {
     h_clean_connection((*config)->conn);
     ulfius_stop_framework((*config)->instance);
     ulfius_clean_instance((*config)->instance);
+    i_clean_session((*config)->i_session);
+    o_free((*config)->i_session);
     o_free((*config)->instance);
+    pthread_mutex_destroy(&(*config)->i_session_lock);
     
     o_free(*config);
     (*config) = NULL;
   }
   y_close_logs();
-  i_global_close();
   exit(exit_value);
 }
 
@@ -394,13 +449,10 @@ int build_config_from_file(struct config_elements * config) {
   
   config_t cfg;
   config_setting_t * root, * database, * mime_type_list, * mime_type, * oidc_cfg;
-  const char * cur_prefix, * cur_external_url, * cur_log_mode, * cur_log_level, * cur_log_file = NULL, * one_log_mode, * cur_allow_origin,
-             * db_type, * db_sqlite_path, * db_mariadb_host = NULL, * db_mariadb_user = NULL, * db_pg_conninfo = NULL,
-             * db_mariadb_password = NULL, * db_mariadb_dbname = NULL, * cur_static_files_path = NULL, * extension = NULL, * mime_type_value = NULL;
-  int db_mariadb_port = 0, i = 0, port = 0, compress = 0, ret;
-  const char * cur_oidc_server_remote_config = NULL, * cur_oidc_server_public_jwks = NULL, * cur_oidc_iss = NULL, * cur_oidc_realm = NULL,
-             * cur_oidc_aud = NULL, * cur_oidc_scope = NULL;
-  int cur_oidc_dpop_max_iat = 0, cur_oidc_server_remote_config_verify_cert = 0;
+  const char * str_value, * one_log_mode, * db_type, * db_sqlite_path, * db_mariadb_host = NULL, * db_mariadb_user = NULL, * db_pg_conninfo = NULL,
+             * db_mariadb_password = NULL, * db_mariadb_dbname = NULL, * extension = NULL, * mime_type_value = NULL, * cur_log_file = NULL;
+  int int_value = 0, db_mariadb_port = 0, i = 0, compress = 0, ret;
+  char * file_content = NULL;
   
   config_init(&cfg);
   
@@ -413,38 +465,46 @@ int build_config_from_file(struct config_elements * config) {
     do {
       root = config_root_setting(&cfg);
       
-      if (config_lookup_int(&cfg, "port", &port) == CONFIG_TRUE) {
-        config->port = (uint)port;
+      if (config_lookup_int(&cfg, "port", &int_value) == CONFIG_TRUE) {
+        config->port = (uint)int_value;
       }
       
-      if (config_lookup_string(&cfg, "external_url", &cur_external_url) == CONFIG_TRUE) {
-        o_free(config->external_url);
-        if ((config->external_url = o_strdup(cur_external_url)) == NULL) {
-          fprintf(stderr, "Error setting config->external_url, exiting\n");
+      if (config_lookup_string(&cfg, "index_url", &str_value) == CONFIG_TRUE) {
+        o_free(config->index_url);
+        if ((config->index_url = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error setting config->redirect_uri, exiting\n");
           ret = 0;
           break;
         }
       }
       
-      if (config_lookup_string(&cfg, "api_prefix", &cur_prefix) == CONFIG_TRUE) {
+      if (config_lookup_string(&cfg, "api_prefix", &str_value) == CONFIG_TRUE) {
         o_free(config->api_prefix);
-        if ((config->api_prefix = o_strdup(cur_prefix)) == NULL) {
+        if ((config->api_prefix = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error setting config->api_prefix, exiting\n");
           ret = 0;
           break;
         }
       }
       
-      if (config_lookup_string(&cfg, "allow_origin", &cur_allow_origin) == CONFIG_TRUE) {
-        if ((config->allow_origin = o_strdup(cur_allow_origin)) == NULL) {
+      if (config_lookup_string(&cfg, "allow_origin", &str_value) == CONFIG_TRUE) {
+        if ((config->allow_origin = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error setting config->allow_origin, exiting\n");
           ret = 0;
           break;
         }
       }
+      
+      if (config_lookup_string(&cfg, "session_key", &str_value) == CONFIG_TRUE) {
+        if ((config->session_key = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error setting config->session_key, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
 
-      if (config_lookup_string(&cfg, "log_mode", &cur_log_mode) == CONFIG_TRUE) {
-        one_log_mode = strtok((char *)cur_log_mode, ",");
+      if (config_lookup_string(&cfg, "log_mode", &str_value) == CONFIG_TRUE) {
+        one_log_mode = strtok((char *)str_value, ",");
         while (one_log_mode != NULL) {
           if (0 == o_strncmp("console", one_log_mode, strlen("console"))) {
             config->log_mode |= Y_LOG_MODE_CONSOLE;
@@ -466,18 +526,22 @@ int build_config_from_file(struct config_elements * config) {
         }
       }
       
-      if (config_lookup_string(&cfg, "log_level", &cur_log_level) == CONFIG_TRUE) {
-        if (0 == o_strncmp("NONE", cur_log_level, strlen("NONE"))) {
+      if (config_lookup_string(&cfg, "log_level", &str_value) == CONFIG_TRUE) {
+        if (0 == o_strncmp("NONE", str_value, strlen("NONE"))) {
           config->log_level = Y_LOG_LEVEL_NONE;
-        } else if (0 == o_strncmp("ERROR", cur_log_level, strlen("ERROR"))) {
+        } else if (0 == o_strncmp("ERROR", str_value, strlen("ERROR"))) {
           config->log_level = Y_LOG_LEVEL_ERROR;
-        } else if (0 == o_strncmp("WARNING", cur_log_level, strlen("WARNING"))) {
+        } else if (0 == o_strncmp("WARNING", str_value, strlen("WARNING"))) {
           config->log_level = Y_LOG_LEVEL_WARNING;
-        } else if (0 == o_strncmp("INFO", cur_log_level, strlen("INFO"))) {
+        } else if (0 == o_strncmp("INFO", str_value, strlen("INFO"))) {
           config->log_level = Y_LOG_LEVEL_INFO;
-        } else if (0 == o_strncmp("DEBUG", cur_log_level, strlen("DEBUG"))) {
+        } else if (0 == o_strncmp("DEBUG", str_value, strlen("DEBUG"))) {
           config->log_level = Y_LOG_LEVEL_DEBUG;
         }
+      }
+      
+      if (config_lookup_int(&cfg, "session_expiration", &int_value) == CONFIG_TRUE) {
+        config->session_expiration = (time_t)int_value;
       }
       
       database = config_setting_get_member(root, "database");
@@ -544,8 +608,8 @@ int build_config_from_file(struct config_elements * config) {
         break;
       }
 
-      if (config_lookup_string(&cfg, "app_files_path", &cur_static_files_path) == CONFIG_TRUE) {
-        config->static_file_config->files_path = o_strdup(cur_static_files_path);
+      if (config_lookup_string(&cfg, "app_files_path", &str_value) == CONFIG_TRUE) {
+        config->static_file_config->files_path = o_strdup(str_value);
         if (config->static_file_config->files_path == NULL) {
           fprintf(stderr, "Error allocating config->static_file_config->files_path, exiting\n");
           ret = 0;
@@ -575,52 +639,142 @@ int build_config_from_file(struct config_elements * config) {
       }
       
       oidc_cfg = config_lookup(&cfg, "oidc");
-      if (config_setting_lookup_string(oidc_cfg, "server_remote_config", &cur_oidc_server_remote_config) == CONFIG_TRUE) {
-        if ((config->oidc_server_remote_config = o_strdup(cur_oidc_server_remote_config)) == NULL) {
+      if (config_setting_lookup_string(oidc_cfg, "server_remote_config", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_server_remote_config = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_server_remote_config, exiting\n");
           ret = 0;
           break;
         }
       }
-      if (config_setting_lookup_bool(oidc_cfg, "server_remote_config_verify_cert", &cur_oidc_server_remote_config_verify_cert) == CONFIG_TRUE) {
-        config->oidc_server_remote_config_verify_cert = (time_t)cur_oidc_server_remote_config_verify_cert;
+      if (config_setting_lookup_string(oidc_cfg, "server_auth_endpoint", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_server_auth_endpoint = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->oidc_server_auth_endpoint, exiting\n");
+          ret = 0;
+          break;
+        }
       }
-      if (config_setting_lookup_string(oidc_cfg, "server_public_jwks", &cur_oidc_server_public_jwks) == CONFIG_TRUE) {
-        if ((config->oidc_server_public_jwks = o_strdup(cur_oidc_server_public_jwks)) == NULL) {
+      if (config_setting_lookup_string(oidc_cfg, "server_token_endpoint", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_server_token_endpoint = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->oidc_server_token_endpoint, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_bool(oidc_cfg, "server_remote_config_verify_cert", &int_value) == CONFIG_TRUE) {
+        config->oidc_server_verify_cert = (unsigned int)int_value;
+      }
+      if (config_setting_lookup_string(oidc_cfg, "server_public_jwks", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_server_public_jwks = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_server_public_jwks, exiting\n");
           ret = 0;
           break;
         }
       }
-      if (config_setting_lookup_string(oidc_cfg, "iss", &cur_oidc_iss) == CONFIG_TRUE) {
-        if ((config->oidc_iss = o_strdup(cur_oidc_iss)) == NULL) {
+      if (config_setting_lookup_string(oidc_cfg, "iss", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_iss = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_iss, exiting\n");
           ret = 0;
           break;
         }
       }
-      if (config_setting_lookup_string(oidc_cfg, "realm", &cur_oidc_realm) == CONFIG_TRUE) {
-        if ((config->oidc_realm = o_strdup(cur_oidc_realm)) == NULL) {
+      if (config_setting_lookup_string(oidc_cfg, "realm", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_realm = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_realm, exiting\n");
           ret = 0;
           break;
         }
       }
-      if (config_setting_lookup_string(oidc_cfg, "aud", &cur_oidc_aud) == CONFIG_TRUE) {
-        if ((config->oidc_aud = o_strdup(cur_oidc_aud)) == NULL) {
+      if (config_setting_lookup_string(oidc_cfg, "aud", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_aud = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_aud, exiting\n");
           ret = 0;
           break;
         }
       }
-      if (config_setting_lookup_int(oidc_cfg, "dpop_max_iat", &cur_oidc_dpop_max_iat) == CONFIG_TRUE) {
-        config->oidc_dpop_max_iat = (time_t)cur_oidc_dpop_max_iat;
+      if (config_setting_lookup_string(oidc_cfg, "scope", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_scope = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->oidc_scope, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "name_claim", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_name_claim = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->oidc_name_claim, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_int(oidc_cfg, "dpop_max_iat", &int_value) == CONFIG_TRUE) {
+        config->oidc_dpop_max_iat = (time_t)int_value;
+      }
+      if (config_setting_lookup_bool(oidc_cfg, "is_jwt_access_token", &int_value) == CONFIG_TRUE) {
+        config->oidc_is_jwt_access_token = (unsigned int)int_value;
       }
       
-      if (config_lookup_string(&cfg, "esras_scope", &cur_oidc_scope) == CONFIG_TRUE) {
-        config->oidc_scope = o_strdup(cur_oidc_scope);
-        if (config->oidc_scope == NULL) {
-          fprintf(stderr, "Error allocating config->oidc_scope, exiting\n");
+      if (config_setting_lookup_string(oidc_cfg, "client_id", &str_value) == CONFIG_TRUE) {
+        if ((config->client_id = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->client_id, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_redirect_uri", &str_value) == CONFIG_TRUE) {
+        if ((config->client_redirect_uri = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->client_redirect_uri, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_secret", &str_value) == CONFIG_TRUE) {
+        if ((config->client_secret = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->client_secret, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_secret_key", &str_value) == CONFIG_TRUE) {
+        if ((file_content = get_file_content(str_value)) != NULL) {
+          if ((config->client_secret_key = r_jwk_quick_import(R_IMPORT_JSON_STR, file_content)) == NULL) {
+            fprintf(stderr, "Error setting client_secret_key file %s, exiting\n", str_value);
+            ret = 0;
+            break;
+          }
+        } else {
+          fprintf(stderr, "Error invalid client_secret_key file %s, exiting\n", str_value);
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_auth_method", &str_value) == CONFIG_TRUE) {
+        if (0 == o_strcmp("auth_method_get", str_value)) {
+          config->client_auth_method = I_AUTH_METHOD_GET;
+        } else if (0 == o_strcmp("auth_method_post", str_value)) {
+          config->client_auth_method = I_AUTH_METHOD_POST;
+        } else if (0 == o_strcmp("jwt_sign", str_value)) {
+          config->client_auth_method = I_AUTH_METHOD_JWT_SIGN_SECRET|I_AUTH_METHOD_JWT_SIGN_PRIVKEY;
+        } else {
+          fprintf(stderr, "Error invalid client_auth_method, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_token_auth_method", &str_value) == CONFIG_TRUE) {
+        if (0 == o_strcmp("client_secret_basic", str_value)) {
+          config->client_token_auth_method = I_TOKEN_AUTH_METHOD_SECRET_BASIC;
+        } else if (0 == o_strcmp("client_secret_post", str_value)) {
+          config->client_token_auth_method = I_TOKEN_AUTH_METHOD_SECRET_POST;
+        } else if (0 == o_strcmp("jwt", str_value)) {
+          config->client_token_auth_method = I_TOKEN_AUTH_METHOD_JWT_SIGN_SECRET|I_TOKEN_AUTH_METHOD_JWT_SIGN_PRIVKEY;
+        } else {
+          fprintf(stderr, "Error invalid client_token_auth_method, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "client_sign_alg", &str_value) == CONFIG_TRUE) {
+        if ((config->client_sign_alg = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->client_sign_alg, exiting\n");
           ret = 0;
           break;
         }
@@ -628,6 +782,7 @@ int build_config_from_file(struct config_elements * config) {
       
     } while (0);
     config_destroy(&cfg);
+    o_free(file_content);
   }
   
   return ret;
@@ -697,12 +852,45 @@ int check_config(struct config_elements * config) {
       break;
     }
     
-    if (!o_strlen(config->external_url)) {
-      fprintf(stderr, "external_url missing, exiting\n");
+    if (!o_strlen(config->index_url)) {
+      fprintf(stderr, "index_url missing, exiting\n");
       ret = 0;
       break;
     }
-    
+
+    if (!o_strlen(config->oidc_server_remote_config) &&
+       (!o_strlen(config->oidc_server_auth_endpoint) ||
+        !o_strlen(config->oidc_server_token_endpoint) ||
+        !o_strlen(config->oidc_server_public_jwks) ||
+        !o_strlen(config->oidc_iss))) {
+      fprintf(stderr, "oidc parameters invalid, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if (!o_strlen(config->client_id)) {
+      fprintf(stderr, "client_id missing, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if (!o_strlen(config->client_redirect_uri)) {
+      fprintf(stderr, "client_redirect_uri missing, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if (!o_strlen(config->client_secret) && config->client_secret_key == NULL) {
+      fprintf(stderr, "client_secret or client_secret_key required, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if ((config->client_auth_method == (I_AUTH_METHOD_JWT_SIGN_SECRET|I_AUTH_METHOD_JWT_SIGN_PRIVKEY) || config->client_token_auth_method == (I_TOKEN_AUTH_METHOD_JWT_SIGN_SECRET|I_TOKEN_AUTH_METHOD_JWT_SIGN_PRIVKEY)) && config->client_sign_alg == NULL) {
+      fprintf(stderr, "client_sign_alg required, exiting\n");
+      ret = 0;
+      break;
+    }
   } while (0);
   
   return ret;
@@ -765,4 +953,71 @@ char * get_file_content(const char * file_path) {
 int check_result_value(json_t * result, const int value) {
   return (json_is_integer(json_object_get(result, "result")) && 
           json_integer_value(json_object_get(result, "result")) == value);
+}
+
+int generate_hash(const char * data, char * output) {
+  gnutls_datum_t key_data;
+  int ret = 0;
+  unsigned char hash[32];
+  size_t hash_len = 32, output_len = 0;
+  
+  if (data != NULL) {
+    key_data.data = (unsigned char *)data;
+    key_data.size = o_strlen(data);
+    
+    if (gnutls_fingerprint(GNUTLS_DIG_SHA256, &key_data, hash, &hash_len) == GNUTLS_E_SUCCESS) {
+      if (o_base64_encode(hash, hash_len, (unsigned char *)output, &output_len)) {
+        output[output_len] = '\0';
+        ret = 1;
+      }
+    }
+  }
+  return ret;
+}
+
+/**
+ *
+ * Generates a random long integer between 0 and max
+ *
+ */
+unsigned char random_at_most(unsigned char max, int nonce) {
+  unsigned char
+  num_bins = (unsigned char) max + 1,
+  num_rand = (unsigned char) 0xff,
+  bin_size = num_rand / num_bins,
+  defect   = num_rand % num_bins;
+
+  unsigned char x[1];
+  do {
+    gnutls_rnd(nonce?GNUTLS_RND_NONCE:GNUTLS_RND_KEY, x, sizeof(x));
+  }
+  // This is carefully written not to overflow
+  while (num_rand - defect <= (unsigned char)x[0]);
+
+  // Truncated division is intentional
+  return x[0]/bin_size;
+}
+
+/**
+ * Generates a random string and store it in str
+ */
+char * rand_string(char * str, size_t str_size) {
+  return rand_string_from_charset(str, str_size, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+}
+
+/**
+ * Generates a random string and store it in str
+ */
+char * rand_string_from_charset(char * str, size_t str_size, const char * charset) {
+  size_t n;
+  
+  if (str_size && str != NULL) {
+    for (n = 0; n < str_size; n++) {
+      str[n] = charset[random_at_most((o_strlen(charset)) - 2, 0)];
+    }
+    str[str_size] = '\0';
+    return str;
+  } else {
+    return NULL;
+  }
 }

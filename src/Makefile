@@ -22,8 +22,8 @@
 CC=gcc
 #CC=clang
 CFLAGS=-c -Wall -Werror -Wextra $(ADDITIONALFLAGS)
-LIBS=-lc -lulfius -lyder -ljansson -lorcania -lhoel -liddawc -lrhonabwy -ljwt -lconfig -lz -lpthread
-OBJECTS=esras.o webservice.c http_compression_callback.o iddawc_resource.o static_compressed_inmemory_website_callback.o
+LIBS=-lc -lulfius -lyder -ljansson -lorcania -lhoel -liddawc -lrhonabwy -ljwt -lconfig -lgnutls -lz -lpthread
+OBJECTS=esras.o webservice.o session.o http_compression_callback.o static_compressed_inmemory_website_callback.o
 PREFIX=/usr/local
 CONFIG_FILE=../esras.conf
 
