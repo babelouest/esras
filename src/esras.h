@@ -45,8 +45,10 @@
 #define ESRAS_LOG_NAME                   "ESRAS"
 #define ESRAS_DEFAULT_TOKEN_EXPIRE       3600
 
-#define ESRAS_TABLE_PROFILE "e_profile"
-#define ESRAS_TABLE_SESSION "e_session"
+#define ESRAS_TABLE_PROFILE             "e_profile"
+#define ESRAS_TABLE_SESSION             "e_session"
+#define ESRAS_TABLE_CLIENT              "e_client"
+#define ESRAS_TABLE_CLIENT_REDIRECT_URI "e_client_redirect_uri"
 
 #define ESRAS_STOP     0
 #define ESRAS_ERROR    1
@@ -141,11 +143,20 @@ json_t * check_session(struct config_elements * config, const char * session_id)
 json_t * init_session(struct config_elements * config, const char * cur_session_id, int create);
 int validate_session_code(struct config_elements * config, const char * session_id, const char * state, const char * code);
 
+json_t * list_client(struct config_elements * config, json_int_t ep_id);
+
 int callback_esras_options (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_default (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_404_if_necessary (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 int callback_esras_check_session (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_callback_url (const struct _u_request * request, struct _u_response * response, void * user_data);
+
+int callback_esras_profile (const struct _u_request * request, struct _u_response * response, void * user_data);
+
+int callback_esras_list_client (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_add_client (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_set_client (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_disable_client (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 #endif

@@ -39,7 +39,7 @@ pthread_cond_t  global_handler_close_cond;
 /**
  *
  * Main function
- * 
+ *
  * Initialize config structure, parse the arguments and the config file
  * Then run the webservice
  *
@@ -50,13 +50,13 @@ int main (int argc, char ** argv) {
   char * jwks_str;
   jwks_t * jwks_pubkey;
   pthread_mutexattr_t mutexattr;
-  
+
   srand(time(NULL));
   if (config == NULL) {
     fprintf(stderr, "Memory error - config\n");
     return 1;
   }
-  
+
   // Init config structure with default values
   config->config_file = NULL;
   config->port = ESRAS_DEFAULT_PORT;
@@ -102,7 +102,7 @@ int main (int argc, char ** argv) {
     return 1;
   }
 
-  if (pthread_mutex_init(&global_handler_close_lock, NULL) || 
+  if (pthread_mutex_init(&global_handler_close_lock, NULL) ||
       pthread_cond_init(&global_handler_close_cond, NULL)) {
     y_log_message(Y_LOG_LEVEL_ERROR, "init - Error initializing global_handler_close_lock or global_handler_close_cond");
   }
@@ -196,9 +196,9 @@ int main (int argc, char ** argv) {
   } else {
     y_log_message(Y_LOG_LEVEL_INFO, "Setting client parameters");
   }
-                                              
+
   ulfius_init_instance(config->instance, config->port, NULL, NULL);
-  
+
   pthread_mutexattr_init ( &mutexattr );
   pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
   if (pthread_mutex_init(&config->i_session_lock, &mutexattr) != 0) {
@@ -209,12 +209,19 @@ int main (int argc, char ** argv) {
 
   // Everything is under the protection of the session
   ulfius_add_endpoint_by_val(config->instance, "*", NULL, "*", ESRAS_CALLBACK_PRIORITY_AUTHENTICATION, &callback_esras_check_session, config);
-  
+
   // Except for the callback
-  ulfius_add_endpoint_by_val(config->instance, "GET", NULL, "callback", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_callback_url, config);
-  
-  // At this point, we declare all API endpoints and configure 
-  
+  ulfius_add_endpoint_by_val(config->instance, "GET", NULL, "/callback", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_callback_url, config);
+
+  // At this point, we declare all API endpoints and configure
+  ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/profile", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_profile, config);
+
+  // Client CRUD
+  ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/client", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_list_client, config);
+  ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/client", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_add_client, config);
+  ulfius_add_endpoint_by_val(config->instance, "PUT", config->api_prefix, "/client/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_set_client, config);
+  ulfius_add_endpoint_by_val(config->instance, "DELETE", config->api_prefix, "/client/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_disable_client, config);
+
   // Other endpoints
   ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
   ulfius_add_endpoint_by_val(config->instance, "OPTIONS", NULL, "*", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_options, (void*)config);
@@ -265,7 +272,7 @@ int main (int argc, char ** argv) {
  * Exit properly the server by closing opened connections, databases and files
  */
 void exit_server(struct config_elements ** config, int exit_value) {
-  
+
   if (config != NULL && *config != NULL) {
     // Cleaning data
     o_free((*config)->config_file);
@@ -290,7 +297,7 @@ void exit_server(struct config_elements ** config, int exit_value) {
     o_free((*config)->client_secret);
     o_free((*config)->client_sign_alg);
     r_jwk_free((*config)->client_secret_key);
-    
+
     o_free((*config)->static_file_config->files_path);
     o_free((*config)->static_file_config->url_prefix);
     u_clean_compressed_inmemory_website_config((*config)->static_file_config);
@@ -303,7 +310,7 @@ void exit_server(struct config_elements ** config, int exit_value) {
     o_free((*config)->i_session);
     o_free((*config)->instance);
     pthread_mutex_destroy(&(*config)->i_session_lock);
-    
+
     o_free(*config);
     (*config) = NULL;
   }
@@ -329,11 +336,11 @@ int build_config_from_args(int argc, char ** argv, struct config_elements * conf
     {"version", optional_argument, NULL, 'v'},
     {NULL, 0, NULL, 0}
   };
-  
+
   if (config != NULL) {
     do {
       next_option = getopt_long(argc, argv, short_options, long_options, NULL);
-      
+
       switch (next_option) {
         case 'c':
           if (optarg != NULL) {
@@ -425,20 +432,20 @@ int build_config_from_args(int argc, char ** argv, struct config_elements * conf
           exit_server(&config, ESRAS_STOP);
           break;
       }
-      
+
     } while (next_option != -1);
-    
+
     // If none exists, exit failure
     if (config->config_file == NULL) {
       fprintf(stderr, "No configuration file found, please specify a configuration file path\n");
       return 0;
     }
-    
+
     return 1;
   } else {
     return 0;
   }
-  
+
 }
 
 /**
@@ -446,16 +453,16 @@ int build_config_from_args(int argc, char ** argv, struct config_elements * conf
  * Read the config file, get mandatory variables and devices
  */
 int build_config_from_file(struct config_elements * config) {
-  
+
   config_t cfg;
   config_setting_t * root, * database, * mime_type_list, * mime_type, * oidc_cfg;
   const char * str_value, * one_log_mode, * db_type, * db_sqlite_path, * db_mariadb_host = NULL, * db_mariadb_user = NULL, * db_pg_conninfo = NULL,
              * db_mariadb_password = NULL, * db_mariadb_dbname = NULL, * extension = NULL, * mime_type_value = NULL, * cur_log_file = NULL;
   int int_value = 0, db_mariadb_port = 0, i = 0, compress = 0, ret;
   char * file_content = NULL;
-  
+
   config_init(&cfg);
-  
+
   if (!config_read_file(&cfg, config->config_file)) {
     fprintf(stderr, "Error parsing config file %s\nOn line %d error: %s\n", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
     config_destroy(&cfg);
@@ -464,11 +471,11 @@ int build_config_from_file(struct config_elements * config) {
     ret = 1;
     do {
       root = config_root_setting(&cfg);
-      
+
       if (config_lookup_int(&cfg, "port", &int_value) == CONFIG_TRUE) {
         config->port = (uint)int_value;
       }
-      
+
       if (config_lookup_string(&cfg, "index_url", &str_value) == CONFIG_TRUE) {
         o_free(config->index_url);
         if ((config->index_url = o_strdup(str_value)) == NULL) {
@@ -477,7 +484,7 @@ int build_config_from_file(struct config_elements * config) {
           break;
         }
       }
-      
+
       if (config_lookup_string(&cfg, "api_prefix", &str_value) == CONFIG_TRUE) {
         o_free(config->api_prefix);
         if ((config->api_prefix = o_strdup(str_value)) == NULL) {
@@ -486,7 +493,7 @@ int build_config_from_file(struct config_elements * config) {
           break;
         }
       }
-      
+
       if (config_lookup_string(&cfg, "allow_origin", &str_value) == CONFIG_TRUE) {
         if ((config->allow_origin = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error setting config->allow_origin, exiting\n");
@@ -494,7 +501,7 @@ int build_config_from_file(struct config_elements * config) {
           break;
         }
       }
-      
+
       if (config_lookup_string(&cfg, "session_key", &str_value) == CONFIG_TRUE) {
         if ((config->session_key = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error setting config->session_key, exiting\n");
@@ -525,7 +532,7 @@ int build_config_from_file(struct config_elements * config) {
           one_log_mode = strtok(NULL, ",");
         }
       }
-      
+
       if (config_lookup_string(&cfg, "log_level", &str_value) == CONFIG_TRUE) {
         if (0 == o_strncmp("NONE", str_value, strlen("NONE"))) {
           config->log_level = Y_LOG_LEVEL_NONE;
@@ -539,11 +546,11 @@ int build_config_from_file(struct config_elements * config) {
           config->log_level = Y_LOG_LEVEL_DEBUG;
         }
       }
-      
+
       if (config_lookup_int(&cfg, "session_expiration", &int_value) == CONFIG_TRUE) {
         config->session_expiration = (time_t)int_value;
       }
-      
+
       database = config_setting_get_member(root, "database");
       if (database != NULL) {
         if (config_setting_lookup_string(database, "type", &db_type) == CONFIG_TRUE) {
@@ -637,7 +644,7 @@ int build_config_from_file(struct config_elements * config) {
           }
         }
       }
-      
+
       oidc_cfg = config_lookup(&cfg, "oidc");
       if (config_setting_lookup_string(oidc_cfg, "server_remote_config", &str_value) == CONFIG_TRUE) {
         if ((config->oidc_server_remote_config = o_strdup(str_value)) == NULL) {
@@ -711,7 +718,7 @@ int build_config_from_file(struct config_elements * config) {
       if (config_setting_lookup_bool(oidc_cfg, "is_jwt_access_token", &int_value) == CONFIG_TRUE) {
         config->oidc_is_jwt_access_token = (unsigned int)int_value;
       }
-      
+
       if (config_setting_lookup_string(oidc_cfg, "client_id", &str_value) == CONFIG_TRUE) {
         if ((config->client_id = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->client_id, exiting\n");
@@ -779,12 +786,12 @@ int build_config_from_file(struct config_elements * config) {
           break;
         }
       }
-      
+
     } while (0);
     config_destroy(&cfg);
     o_free(file_content);
   }
-  
+
   return ret;
 }
 
@@ -844,14 +851,14 @@ void exit_handler(int signal) {
  */
 int check_config(struct config_elements * config) {
   int ret = 1;
-  
+
   do {
     if (!config->port || config->port > 65535) {
       fprintf(stderr, "Invalid port number, exiting\n");
       ret = 0;
       break;
     }
-    
+
     if (!o_strlen(config->index_url)) {
       fprintf(stderr, "index_url missing, exiting\n");
       ret = 0;
@@ -892,7 +899,7 @@ int check_config(struct config_elements * config) {
       break;
     }
   } while (0);
-  
+
   return ret;
 }
 
@@ -903,7 +910,7 @@ int check_config(struct config_elements * config) {
  */
 const char * get_ip_source(const struct _u_request * request) {
   const char * ip_source = u_map_get(request->map_header, "X-Forwarded-For");
-  
+
   if (ip_source == NULL) {
     struct sockaddr_in * in_source = (struct sockaddr_in *)request->client_address;
     if (in_source != NULL) {
@@ -912,7 +919,7 @@ const char * get_ip_source(const struct _u_request * request) {
       ip_source = "NOT_FOUND";
     }
   }
-  
+
   return ip_source;
 };
 
@@ -943,7 +950,7 @@ char * get_file_content(const char * file_path) {
     }
     fclose (f);
   }
-  
+
   return buffer;
 }
 
@@ -951,7 +958,7 @@ char * get_file_content(const char * file_path) {
  * Check if the result json object has a "result" element that is equal to value
  */
 int check_result_value(json_t * result, const int value) {
-  return (json_is_integer(json_object_get(result, "result")) && 
+  return (json_is_integer(json_object_get(result, "result")) &&
           json_integer_value(json_object_get(result, "result")) == value);
 }
 
@@ -960,11 +967,11 @@ int generate_hash(const char * data, char * output) {
   int ret = 0;
   unsigned char hash[32];
   size_t hash_len = 32, output_len = 0;
-  
+
   if (data != NULL) {
     key_data.data = (unsigned char *)data;
     key_data.size = o_strlen(data);
-    
+
     if (gnutls_fingerprint(GNUTLS_DIG_SHA256, &key_data, hash, &hash_len) == GNUTLS_E_SUCCESS) {
       if (o_base64_encode(hash, hash_len, (unsigned char *)output, &output_len)) {
         output[output_len] = '\0';
@@ -1010,7 +1017,7 @@ char * rand_string(char * str, size_t str_size) {
  */
 char * rand_string_from_charset(char * str, size_t str_size, const char * charset) {
   size_t n;
-  
+
   if (str_size && str != NULL) {
     for (n = 0; n < str_size; n++) {
       str[n] = charset[random_at_most((o_strlen(charset)) - 2, 0)];

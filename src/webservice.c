@@ -61,17 +61,21 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
   char expires[129];
   time_t now;
   struct tm ts;
-  
+
   time(&now);
   now += config->session_expiration;
   gmtime_r(&now, &ts);
-  strftime(expires, 128, "%a, %d %b %Y %T %Z", &ts);  
+  strftime(expires, 128, "%a, %d %b %Y %T %Z", &ts);
   if (check_result_value(j_session, E_ERROR_UNAUTHORIZED) || check_result_value(j_session, E_ERROR_NOT_FOUND)) {
     j_result = init_session(config, u_map_get(request->map_cookie, config->session_key), check_result_value(j_session, E_ERROR_NOT_FOUND));
     if (check_result_value(j_result, E_OK)) {
       ulfius_add_cookie_to_response(response, config->session_key, json_string_value(json_object_get(json_object_get(j_result, "session"), "session_id")), expires, 0, config->cookie_domain, "/", config->cookie_secure, 0);
       u_map_put(response->map_header, "Location", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
       response->status = 302;
+
+      // Uncomment this line if you're working on the frontend
+      y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+
       ret = U_CALLBACK_COMPLETE;
     } else {
       y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_check_session - Error init_session");
@@ -108,4 +112,46 @@ int callback_esras_callback_url (const struct _u_request * request, struct _u_re
     ulfius_set_string_body_response(response, 400, "Invalid request");
   }
   return U_CALLBACK_COMPLETE;
+}
+
+int callback_esras_profile (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  UNUSED(user_data);
+  ulfius_set_json_body_response(response, 200, (json_t *)response->shared_data);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_list_client (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_list_client = list_client(config, json_integer_value(json_object_get((json_t *)response->shared_data, "ep_id")));
+
+  if (check_result_value(j_list_client, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_list_client, "client"));
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_list_client - Error list_client");
+  }
+  json_decref(j_list_client);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_add_client (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  UNUSED(response);
+  UNUSED(user_data);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_set_client (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  UNUSED(response);
+  UNUSED(user_data);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_disable_client (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  UNUSED(response);
+  UNUSED(user_data);
+  return U_CALLBACK_CONTINUE;
 }
