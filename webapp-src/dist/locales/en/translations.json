@@ -1,2 +1,20 @@
 {
+  "log_out": "Log out",
+  "submit": "Submit",
+  "cancel": "Cancel",
+  "register_new": "Register new client",
+  "register_client": "Client registration",
+  "register_client_name": "Display name",
+  "register_client_name_help": "Name you can use to differenciate your clients",
+  "register_client_redirect_uris": "Redirect URIs: ",
+  "register_client_redirect_uris_help": "URIs allowed: http[s]://localhost[:xxxx]/, http[s]://*.local/ or {{redirectUriEsras}} is added by default",
+  "register_client_confidential": "Confidential",
+  "register_client_auth_method": "Token endpoint authentication method",
+  "register_client_auth_method_help": "'none' is for public clients, 'private_key_jwt' requires a public key, the others will generate a client secret",
+  "register_client_grant_types": "Grant types",
+  "register_client_grant_types_help": "Default is 'authorization_code', 'refresh_token' is required if you want to refresh access tokens",
+  "register_client_response_types": "Response types",
+  "register_client_response_types_help": "If no response type is selected, 'code' will be set",
+  "register_client_jwks": "Public key",
+  "register_client_jwks_help": "The client public key must be in JWKS format"
 }
