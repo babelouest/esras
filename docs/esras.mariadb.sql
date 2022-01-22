@@ -27,8 +27,9 @@ CREATE TABLE e_session (
 CREATE TABLE e_client (
   ec_id INT(11) PRIMARY KEY AUTO_INCREMENT,
   ep_id INT(11) NOT NULL,
-  ec_name VARCHAR(128),
-  ec_status TINYINT DEFAULT 0,
+  ec_name VARCHAR(32),
+  ec_display_name VARCHAR(128),
+  ec_enabled TINYINT DEFAULT 1,
   ec_client_id VARCHAR(128),
   ec_secret VARCHAR(128),
   ec_management_at VARCHAR(128),
