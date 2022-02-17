@@ -27,12 +27,19 @@ class TopMenu extends Component {
   }
   
   logOut() {
+    messageDispatcher.sendMessage("App", {action: 'logout'});
   }
   
 	render() {
-    var name = "";
+    var name = "", rightMenuJsx;
     if (this.state.profile) {
       name = this.state.profile.name || this.state.profile.sub;
+      rightMenuJsx =
+        <ul className="navbar-nav ms-auto flex-nowrap text-right">
+          <li className="nav-item">
+            <a className="nav-link" onClick={() => this.logOut()} href="#">{i18next.t("log_out")}</a>
+          </li>
+        </ul>
     }
     return (
       <nav className="navbar navbar-expand-lg nav-pills navbar-light bg-light">
@@ -48,21 +55,7 @@ class TopMenu extends Component {
                 {name}
               </li>
             </ul>
-            <ul className="navbar-nav ms-auto flex-nowrap text-right">
-              <li className="nav-item">
-                <a className="nav-link"
-                   data-bs-toggle="collapse"
-                   data-bs-target=".navbar-collapse.show"
-                   title={i18next.t("register_new")}
-                   onClick={(e) => this.navigateTo(e, "register")}
-                   href="#">
-                  <i className="fa fa-plus btn-icon-right" aria-hidden="true"></i>
-                </a>
-              </li>
-              <li className="nav-item">
-                <a className="nav-link" onClick={() => this.logOut()} href="#">{i18next.t("log_out")}</a>
-              </li>
-            </ul>
+            {rightMenuJsx}
           </div>
         </div>
       </nav>

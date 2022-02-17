@@ -70,16 +70,21 @@ int main (int argc, char ** argv) {
   config->allow_origin = NULL;
   config->static_file_config = o_malloc(sizeof(struct _u_compressed_inmemory_website_config));
   config->i_session = o_malloc(sizeof(struct _i_session));
+  config->register_scope = NULL;
+  config->register_access_token = NULL;
+  config->register_access_token_expiration = 0;
   config->use_secure_connection = 0;
   config->secure_connection_key_file = NULL;
   config->secure_connection_pem_file = NULL;
   config->session_key = NULL;
   config->session_expiration = ESRAS_DEFAULT_SESSION_EXPIRATION;
+  config->session_extend = 0;
   config->cookie_domain = NULL;
   config->cookie_secure = 1;
   config->oidc_server_remote_config = NULL;
   config->oidc_server_auth_endpoint = NULL;
   config->oidc_server_token_endpoint = NULL;
+  config->oidc_server_token_introspection = NULL;
   config->oidc_server_verify_cert = 1;
   config->oidc_server_public_jwks = NULL;
   config->oidc_scope = NULL;
@@ -144,7 +149,7 @@ int main (int argc, char ** argv) {
     exit_server(&config, ESRAS_ERROR);
   }
 
-  if (!y_init_logs(ESRAS_LOG_NAME, config->log_mode, config->log_level, config->log_file, "Starting Esras Server")) {
+  if (!y_init_logs(ESRAS_LOG_NAME, config->log_mode, config->log_level, config->log_file, "Starting Dagda Server")) {
     fprintf(stderr, "Error initializing logs\n");
     exit_server(&config, ESRAS_ERROR);
   }
@@ -162,24 +167,30 @@ int main (int argc, char ** argv) {
   } else {
     if (i_set_parameter_list(config->i_session, I_OPT_AUTH_ENDPOINT, config->oidc_server_auth_endpoint,
                                                 I_OPT_TOKEN_ENDPOINT, config->oidc_server_token_endpoint,
+                                                I_OPT_INTROSPECTION_ENDPOINT, config->oidc_server_token_introspection,
                                                 I_OPT_ISSUER, config->oidc_iss,
                                                 I_OPT_NONE) != I_OK) {
       fprintf(stderr, "Error initializing i_session AS parameters list\n");
       exit_server(&config, ESRAS_ERROR);
     }
     jwks_str = get_file_content(config->oidc_server_public_jwks);
-    jwks_pubkey = r_jwks_quick_import(R_IMPORT_JSON_STR, jwks_str, R_IMPORT_NONE);
-    if (jwks_pubkey != NULL) {
-      if (i_set_server_jwks(config->i_session, jwks_pubkey) != I_OK) {
-        fprintf(stderr, "Error setting server_public_jwks\n");
+    if (jwks_str != NULL) {
+      jwks_pubkey = r_jwks_quick_import(R_IMPORT_JSON_STR, jwks_str, R_IMPORT_NONE);
+      if (jwks_pubkey != NULL) {
+        if (i_set_server_jwks(config->i_session, jwks_pubkey) != I_OK) {
+          fprintf(stderr, "Error setting server_public_jwks\n");
+          exit_server(&config, ESRAS_ERROR);
+        }
+      } else {
+        fprintf(stderr, "Error initializing server_public_jwks\n");
         exit_server(&config, ESRAS_ERROR);
       }
+      r_jwks_free(jwks_pubkey);
     } else {
-      fprintf(stderr, "Error initializing server_public_jwks\n");
+      fprintf(stderr, "Error readinf file from server_public_jwks\n");
       exit_server(&config, ESRAS_ERROR);
     }
     o_free(jwks_str);
-    r_jwks_free(jwks_pubkey);
   }
   if (i_set_parameter_list(config->i_session, I_OPT_CLIENT_ID, config->client_id,
                                               I_OPT_REDIRECT_URI, config->client_redirect_uri,
@@ -189,7 +200,7 @@ int main (int argc, char ** argv) {
                                               I_OPT_CLIENT_SIGN_ALG, config->client_sign_alg,
                                               I_OPT_SCOPE, config->oidc_scope,
                                               I_OPT_SCOPE_APPEND, "openid",
-                                              I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CODE,
+                                              I_OPT_OPENID_CONFIG_STRICT, 0,
                                               I_OPT_NONE) != I_OK) {
     fprintf(stderr, "Error initializing i_session client parameters list\n");
     exit_server(&config, ESRAS_ERROR);
@@ -215,6 +226,7 @@ int main (int argc, char ** argv) {
 
   // At this point, we declare all API endpoints and configure
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/profile", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_profile, config);
+  ulfius_add_endpoint_by_val(config->instance, "DELETE", config->api_prefix, "/profile", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_delete_session, config);
 
   // Client CRUD
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/client", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_list_client, config);
@@ -236,7 +248,7 @@ int main (int argc, char ** argv) {
   u_map_put(config->instance->default_headers, "Pragma", "no-cache");
   u_map_put(config->instance->default_headers, "X-Frame-Options", "deny");
 
-  y_log_message(Y_LOG_LEVEL_INFO, "Start Esras on port %d, prefix: %s, secure: %s, scope %s, index url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->oidc_scope, config->index_url);
+  y_log_message(Y_LOG_LEVEL_INFO, "Start Dagda on port %d, prefix: %s, secure: %s, scope %s, index url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->oidc_scope, config->index_url);
 
   if (config->use_secure_connection) {
     char * key_file = get_file_content(config->secure_connection_key_file);
@@ -281,11 +293,13 @@ void exit_server(struct config_elements ** config, int exit_value) {
     o_free((*config)->log_file);
     o_free((*config)->session_key);
     o_free((*config)->allow_origin);
+    o_free((*config)->cookie_domain);
     o_free((*config)->secure_connection_key_file);
     o_free((*config)->secure_connection_pem_file);
     o_free((*config)->oidc_server_remote_config);
     o_free((*config)->oidc_server_auth_endpoint);
     o_free((*config)->oidc_server_token_endpoint);
+    o_free((*config)->oidc_server_token_introspection);
     o_free((*config)->oidc_server_public_jwks);
     o_free((*config)->oidc_scope);
     o_free((*config)->oidc_iss);
@@ -308,6 +322,8 @@ void exit_server(struct config_elements ** config, int exit_value) {
     ulfius_clean_instance((*config)->instance);
     i_clean_session((*config)->i_session);
     o_free((*config)->i_session);
+    o_free((*config)->register_scope);
+    o_free((*config)->register_access_token);
     o_free((*config)->instance);
     pthread_mutex_destroy(&(*config)->i_session_lock);
 
@@ -456,7 +472,7 @@ int build_config_from_file(struct config_elements * config) {
 
   config_t cfg;
   config_setting_t * root, * database, * mime_type_list, * mime_type, * oidc_cfg;
-  const char * str_value, * one_log_mode, * db_type, * db_sqlite_path, * db_mariadb_host = NULL, * db_mariadb_user = NULL, * db_pg_conninfo = NULL,
+  const char * str_value, * str_value_2, * one_log_mode, * db_type, * db_sqlite_path, * db_mariadb_host = NULL, * db_mariadb_user = NULL, * db_pg_conninfo = NULL,
              * db_mariadb_password = NULL, * db_mariadb_dbname = NULL, * extension = NULL, * mime_type_value = NULL, * cur_log_file = NULL;
   int int_value = 0, db_mariadb_port = 0, i = 0, compress = 0, ret;
   char * file_content = NULL;
@@ -510,6 +526,20 @@ int build_config_from_file(struct config_elements * config) {
         }
       }
 
+      if (config_lookup_string(&cfg, "cookie_domain", &str_value) == CONFIG_TRUE) {
+        o_free(config->cookie_domain);
+        config->cookie_domain = o_strdup(str_value);
+        if (config->cookie_domain == NULL) {
+          fprintf(stderr, "Error allocating config->cookie_domain, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+
+      if (config_lookup_int(&cfg, "cookie_secure", &int_value) == CONFIG_TRUE) {
+        config->cookie_secure = (uint)int_value;
+      }
+
       if (config_lookup_string(&cfg, "log_mode", &str_value) == CONFIG_TRUE) {
         one_log_mode = strtok((char *)str_value, ",");
         while (one_log_mode != NULL) {
@@ -549,6 +579,23 @@ int build_config_from_file(struct config_elements * config) {
 
       if (config_lookup_int(&cfg, "session_expiration", &int_value) == CONFIG_TRUE) {
         config->session_expiration = (time_t)int_value;
+      }
+
+      if (config_lookup_bool(&cfg, "session_extend", &int_value) == CONFIG_TRUE) {
+        config->session_extend = int_value;
+      }
+
+      if (config_lookup_bool(&cfg, "use_secure_connection", &int_value) == CONFIG_TRUE) {
+        if (config_lookup_string(&cfg, "secure_connection_key_file", &str_value) == CONFIG_TRUE &&
+            config_lookup_string(&cfg, "secure_connection_pem_file", &str_value_2) == CONFIG_TRUE) {
+          config->use_secure_connection = int_value;
+          config->secure_connection_key_file = o_strdup(str_value);
+          config->secure_connection_pem_file = o_strdup(str_value_2);
+        } else {
+          fprintf(stderr, "Error secure connection is active but certificate is not valid, exiting\n");
+          ret = 0;
+          break;
+        }
       }
 
       database = config_setting_get_member(root, "database");
@@ -663,6 +710,13 @@ int build_config_from_file(struct config_elements * config) {
       if (config_setting_lookup_string(oidc_cfg, "server_token_endpoint", &str_value) == CONFIG_TRUE) {
         if ((config->oidc_server_token_endpoint = o_strdup(str_value)) == NULL) {
           fprintf(stderr, "Error allocating config->oidc_server_token_endpoint, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+      if (config_setting_lookup_string(oidc_cfg, "server_token_introspection", &str_value) == CONFIG_TRUE) {
+        if ((config->oidc_server_token_introspection = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->oidc_server_token_introspection, exiting\n");
           ret = 0;
           break;
         }
@@ -786,6 +840,13 @@ int build_config_from_file(struct config_elements * config) {
           break;
         }
       }
+      if (config_setting_lookup_string(oidc_cfg, "client_register_scope", &str_value) == CONFIG_TRUE) {
+        if ((config->register_scope = o_strdup(str_value)) == NULL) {
+          fprintf(stderr, "Error allocating config->register_scope, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
 
     } while (0);
     config_destroy(&cfg);
@@ -799,7 +860,7 @@ int build_config_from_file(struct config_elements * config) {
  * Print help message to output file specified
  */
 void print_help(FILE * output) {
-  fprintf(output, "\nEsras - OAuth2/OIDC client program to test or validate OAuth2/OIDC AS for multiple users, with database persistence - AKA idwcc under steroids\n");
+  fprintf(output, "\nDagda - Planificateur d'équipe\n");
   fprintf(output, "\n");
   fprintf(output, "Version %s\n", _ESRAS_VERSION_);
   fprintf(output, "\n");
@@ -869,6 +930,7 @@ int check_config(struct config_elements * config) {
        (!o_strlen(config->oidc_server_auth_endpoint) ||
         !o_strlen(config->oidc_server_token_endpoint) ||
         !o_strlen(config->oidc_server_public_jwks) ||
+        (!config->oidc_is_jwt_access_token && !o_strlen(config->oidc_server_token_introspection)) ||
         !o_strlen(config->oidc_iss))) {
       fprintf(stderr, "oidc parameters invalid, exiting\n");
       ret = 0;
@@ -889,6 +951,12 @@ int check_config(struct config_elements * config) {
 
     if (!o_strlen(config->client_secret) && config->client_secret_key == NULL) {
       fprintf(stderr, "client_secret or client_secret_key required, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if (!o_strlen(config->register_scope)) {
+      fprintf(stderr, "register_scope missing, exiting\n");
       ret = 0;
       break;
     }

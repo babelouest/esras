@@ -45,8 +45,8 @@
 #define ESRAS_LOG_NAME                   "ESRAS"
 #define ESRAS_DEFAULT_TOKEN_EXPIRE       3600
 
-#define ESRAS_TABLE_PROFILE             "e_profile"
-#define ESRAS_TABLE_SESSION             "e_session"
+#define ESRAS_TABLE_PROFILE             "profile"
+#define ESRAS_TABLE_SESSION             "session"
 #define ESRAS_TABLE_CLIENT              "e_client"
 #define ESRAS_TABLE_CLIENT_REDIRECT_URI "e_client_redirect_uri"
 
@@ -93,11 +93,13 @@ struct config_elements {
   char                                         * secure_connection_pem_file;
   char                                         * session_key;
   time_t                                         session_expiration;
+  unsigned int                                   session_extend;
   char                                         * cookie_domain;
   unsigned int                                   cookie_secure;
   char                                         * oidc_server_remote_config;
   char                                         * oidc_server_auth_endpoint;
   char                                         * oidc_server_token_endpoint;
+  char                                         * oidc_server_token_introspection;
   unsigned int                                   oidc_server_verify_cert;
   char                                         * oidc_server_public_jwks;
   char                                         * oidc_scope;
@@ -118,6 +120,9 @@ struct config_elements {
   struct _u_instance                           * instance;
 	struct _u_compressed_inmemory_website_config * static_file_config;
   struct _i_session                            * i_session;
+  char                                         * register_scope;
+  char                                         * register_access_token;
+  time_t                                         register_access_token_expiration;
   pthread_mutex_t                                i_session_lock;
 };
 
@@ -140,10 +145,20 @@ char * rand_string_from_charset(char * str, size_t str_size, const char * charse
 int check_result_value(json_t * result, const int value);
 
 json_t * check_session(struct config_elements * config, const char * session_id);
+int delete_session(struct config_elements * config, const char * session_id);
 json_t * init_session(struct config_elements * config, const char * cur_session_id, int create);
 int validate_session_code(struct config_elements * config, const char * session_id, const char * state, const char * code);
 
-json_t * list_client(struct config_elements * config, json_int_t ep_id);
+json_t * list_client(struct config_elements * config, json_int_t p_id);
+json_t * get_client(struct config_elements * config, const char * client_id, json_int_t p_id);
+int add_client(struct config_elements * config, json_t * j_client, json_int_t p_id);
+int set_client(struct config_elements * config, json_t * j_client, json_int_t ec_id);
+int disable_client(struct config_elements * config, json_int_t ec_id);
+
+int is_client_registration_valid(json_t * j_client);
+json_t * register_client(struct config_elements * config, json_t * j_client);
+json_t * update_client_registration(struct config_elements * config, json_t * j_client_database, json_t * j_registration);
+int disable_client_registration(struct config_elements * config, json_t * j_client_database);
 
 int callback_esras_options (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_default (const struct _u_request * request, struct _u_response * response, void * user_data);
@@ -153,6 +168,7 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
 int callback_esras_callback_url (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 int callback_esras_profile (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_delete_session (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 int callback_esras_list_client (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_add_client (const struct _u_request * request, struct _u_response * response, void * user_data);

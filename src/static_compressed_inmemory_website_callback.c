@@ -2,9 +2,9 @@
  *
  * Static file server with compression Ulfius callback
  *
- * Copyright 2020-2021 Nicolas Mora <mail@babelouest.org>
+ * Copyright 2020-2022 Nicolas Mora <mail@babelouest.org>
  *
- * Version 20211026
+ * Version 20220201
  *
  * The MIT License (MIT)
  *
@@ -331,17 +331,6 @@ int callback_static_compressed_inmemory_website (const struct _u_request * reque
           compress_mode = U_COMPRESS_DEFL;
         }
 
-        content_type = u_map_get_case(&config->mime_types, get_filename_ext(file_requested));
-        if (content_type == NULL) {
-          content_type = u_map_get(&config->mime_types, "*");
-          y_log_message(Y_LOG_LEVEL_WARNING, "Static File Server - Unknown mime type for extension %s", get_filename_ext(file_requested));
-        }
-        if (!string_array_has_value((const char **)config->mime_types_compressed, content_type)) {
-          compress_mode = U_COMPRESS_NONE;
-        }
-
-        u_map_put(response->map_header, "Content-Type", content_type);
-        u_map_copy_into(response->map_header, &config->map_header);
 
         if (compress_mode != U_COMPRESS_NONE) {
           if (compress_mode == U_COMPRESS_GZIP && config->allow_cache_compressed && u_map_has_key(&config->gzip_files, file_requested)) {
@@ -356,6 +345,18 @@ int callback_static_compressed_inmemory_website (const struct _u_request * reque
             if (!pthread_mutex_lock(&config->lock)) {
               f = fopen (file_path, "rb");
               if (f) {
+                content_type = u_map_get_case(&config->mime_types, get_filename_ext(file_requested));
+                if (content_type == NULL) {
+                  content_type = u_map_get(&config->mime_types, "*");
+                  y_log_message(Y_LOG_LEVEL_WARNING, "Static File Server - Unknown mime type for extension %s", get_filename_ext(file_requested));
+                }
+                if (!string_array_has_value((const char **)config->mime_types_compressed, content_type)) {
+                  compress_mode = U_COMPRESS_NONE;
+                }
+
+                u_map_put(response->map_header, "Content-Type", content_type);
+                u_map_copy_into(response->map_header, &config->map_header);
+                
                 fseek (f, 0, SEEK_END);
                 offset = length = ftell (f);
                 fseek (f, 0, SEEK_SET);

@@ -1,7 +1,6 @@
 /**
  *
- * esras: OAuth2/OIDC client program to test or validate OAuth2/OIDC AS
- * for multiple users, with database persistence - AKA idwcc on steroids
+ * Dagda: Planificateur d'équipe
  *
  * Copyright 2022 Nicolas Mora <mail@babelouest.org>
  *
@@ -32,8 +31,17 @@ int verify_access_token(struct config_elements * config) {
       j_introspection = json_incref(config->i_session->access_token_payload);
     }
   } else {
-    if (i_get_token_introspection(config->i_session, &j_introspection, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET, 0) != I_OK) {
-      y_log_message(Y_LOG_LEVEL_ERROR, "verify_access_token - Error i_get_token_introspection");
+    if (i_set_str_parameter(config->i_session, I_OPT_TOKEN_TARGET, i_get_str_parameter(config->i_session, I_OPT_ACCESS_TOKEN)) == I_OK) {
+      if (i_get_token_introspection(config->i_session, &j_introspection, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET, 0) != I_OK) {
+        y_log_message(Y_LOG_LEVEL_ERROR, "verify_access_token - Error i_get_token_introspection");
+      } else {
+        if (json_object_get(j_introspection, "active") != json_true()) {
+          json_decref(j_introspection);
+          j_introspection = NULL;
+        }
+      }
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "verify_access_token - Error setting target token");
     }
   }
   if (j_introspection != NULL) {
@@ -44,19 +52,18 @@ int verify_access_token(struct config_elements * config) {
       y_log_message(Y_LOG_LEVEL_ERROR, "verify_access_token - Error split_string");
       ret = E_ERROR;
     }
-    json_decref(j_introspection);
   } else {
     ret = E_ERROR_UNAUTHORIZED;
   }
+  json_decref(j_introspection);
   return ret;
 }
 
 json_t * check_session(struct config_elements * config, const char * session_id) {
   json_t * j_return, * j_query, * j_result, * j_result_profile;
   int res;
-  char session_hash[64] = {0};
-  char * expire_clause;
-  time_t now;
+  char * expire_clause, * expiration_clause, session_hash[64] = {0};
+  time_t now, token_expire;
 
   if (o_strlen(session_id) == ESRAS_SESSION_LENGTH && generate_hash(session_id, session_hash)) {
     if (config->conn->type==HOEL_DB_TYPE_MARIADB) {
@@ -69,30 +76,30 @@ json_t * check_session(struct config_elements * config, const char * session_id)
     j_query = json_pack("{sss[ssss]s{sss{ssss}si}}",
                         "table", ESRAS_TABLE_SESSION,
                         "columns",
-                          "ep_id",
-                          "es_id",
-                          "es_refresh_token AS refresh_token",
-                          SWITCH_DB_TYPE(config->conn->type, "UNIX_TIMESTAMP(es_token_expires_at) AS expires_at", "es_token_expires_at AS expires_at", "EXTRACT(EPOCH FROM es_token_expires_at)::integer AS expires_at"),
+                          "p_id",
+                          "s_id",
+                          "s_refresh_token AS refresh_token",
+                          SWITCH_DB_TYPE(config->conn->type, "UNIX_TIMESTAMP(s_token_expires_at) AS expires_at", "s_token_expires_at AS expires_at", "EXTRACT(EPOCH FROM s_token_expires_at)::integer AS expires_at"),
                         "where",
-                          "es_session_hash", session_hash,
-                          "es_expires_at",
+                          "s_session_hash", session_hash,
+                          "s_expires_at",
                             "operator", "raw",
                             "value", expire_clause,
-                          "es_enabled", 1);
+                          "s_enabled", 1);
     o_free(expire_clause);
     res = h_select(config->conn, j_query, &j_result, NULL);
     json_decref(j_query);
     if (res == H_OK) {
       if (json_array_size(j_result)) {
-        j_query = json_pack("{sss[ss]s{sO}}",
+        j_query = json_pack("{sss[sss]s{sO}}",
                             "table", ESRAS_TABLE_PROFILE,
                             "columns",
-                              "ep_sub AS sub",
-                              "ep_name AS name",
+                              "p_id",
+                              "p_sub AS sub",
+                              "p_name AS name",
                             "where",
-                              "ep_id", json_object_get(json_array_get(j_result, 0), "ep_id"));
-        char * query;
-        res = h_select(config->conn, j_query, &j_result_profile, &query);
+                              "p_id", json_object_get(json_array_get(j_result, 0), "p_id"));
+        res = h_select(config->conn, j_query, &j_result_profile, NULL);
         json_decref(j_query);
         if (res == H_OK) {
           if (json_array_size(j_result_profile)) {
@@ -104,35 +111,58 @@ json_t * check_session(struct config_elements * config, const char * session_id)
                                                               I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_REFRESH_TOKEN,
                                                               I_OPT_NONE) == I_OK) {
                     if (i_run_token_request(config->i_session) == I_OK) {
-                      if (verify_access_token(config) == E_OK) {
+                      if ((res = verify_access_token(config)) == E_OK) {
                         if (i_get_int_parameter(config->i_session, I_OPT_EXPIRES_IN)) {
-                          now += (time_t)i_get_int_parameter(config->i_session, I_OPT_EXPIRES_IN);
+                          token_expire = now + (time_t)i_get_int_parameter(config->i_session, I_OPT_EXPIRES_IN);
                         } else {
-                          now += ESRAS_DEFAULT_TOKEN_EXPIRE;
+                          token_expire = now + ESRAS_DEFAULT_TOKEN_EXPIRE;
                         }
                         if (config->conn->type==HOEL_DB_TYPE_MARIADB) {
-                          expire_clause = msprintf("FROM_UNIXTIME(%u)", now);
+                          expire_clause = msprintf("FROM_UNIXTIME(%u)", token_expire);
                         } else if (config->conn->type==HOEL_DB_TYPE_PGSQL) {
-                          expire_clause = msprintf("TO_TIMESTAMP(%u)", now);
+                          expire_clause = msprintf("TO_TIMESTAMP(%u)", token_expire);
                         } else { // HOEL_DB_TYPE_SQLITE
-                          expire_clause = msprintf("%u", now);
+                          expire_clause = msprintf("%u", token_expire);
                         }
                         j_query = json_pack("{sss{s{ss}ss*}s{sO}}",
                                             "table", ESRAS_TABLE_SESSION,
                                             "set",
-                                              "es_token_expires_at",
+                                              "s_token_expires_at",
                                                 "raw", expire_clause,
-                                              "es_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
+                                              "s_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
                                             "where",
-                                              "es_id", json_object_get(json_array_get(j_result, 0), "es_id"));
+                                              "s_id", json_object_get(json_array_get(j_result, 0), "s_id"));
+                        if (config->session_extend) {
+                          if (config->conn->type==HOEL_DB_TYPE_MARIADB) {
+                            expiration_clause = msprintf("FROM_UNIXTIME(%u)", (now + (unsigned int)config->session_expiration ));
+                          } else if (config->conn->type==HOEL_DB_TYPE_PGSQL) {
+                            expiration_clause = msprintf("TO_TIMESTAMP(%u)", (now + (unsigned int)config->session_expiration ));
+                          } else { // HOEL_DB_TYPE_SQLITE
+                            expiration_clause = msprintf("%u", (now + (unsigned int)config->session_expiration ));
+                          }
+                          json_object_set_new(json_object_get(j_query, "set"), "s_expires_at", json_pack("{ss}", "raw", expiration_clause));
+                          o_free(expiration_clause);
+                        }
+                        o_free(expire_clause);
                         res = h_update(config->conn, j_query, NULL);
                         json_decref(j_query);
                         if (res == H_OK) {
-                          j_return = json_pack("{sisO}", "result", E_OK, "session", json_array_get(j_result_profile, 0));
+                          if (i_get_str_parameter(config->i_session, I_OPT_REVOCATION_ENDPOINT) != NULL) {
+                            if (i_set_str_parameter(config->i_session, I_OPT_TOKEN_TARGET, i_get_str_parameter(config->i_session, I_OPT_ACCESS_TOKEN)) == I_OK) {
+                              if (i_revoke_token(config->i_session, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET) != I_OK) {
+                                y_log_message(Y_LOG_LEVEL_ERROR, "check_session - Error i_revoke_token");
+                              }
+                            } else {
+                              y_log_message(Y_LOG_LEVEL_ERROR, "check_session - Error setting target token");
+                            }
+                          }
+                          j_return = json_pack("{sisOso}", "result", E_OK, "session", json_array_get(j_result_profile, 0), "extend", config->session_extend?json_true():json_false());
                         } else {
                           y_log_message(Y_LOG_LEVEL_ERROR, "check_session - Error executing j_query (4)");
                           j_return = json_pack("{si}", "result", E_ERROR_DB);
                         }
+                      } else if (res == E_ERROR_UNAUTHORIZED) {
+                        j_return = json_pack("{si}", "result", E_ERROR_UNAUTHORIZED);
                       } else {
                         y_log_message(Y_LOG_LEVEL_ERROR, "check_session - Error verify_access_token");
                         j_return = json_pack("{si}", "result", E_ERROR);
@@ -155,11 +185,12 @@ json_t * check_session(struct config_elements * config, const char * session_id)
                 j_return = json_pack("{si}", "result", E_ERROR);
               }
             } else {
-              j_return = json_pack("{sisO}", "result", E_OK, "session", json_array_get(j_result_profile, 0));
+              j_return = json_pack("{sisOso}", "result", E_OK, "session", json_array_get(j_result_profile, 0), "extend", json_false());
             }
           } else {
             j_return = json_pack("{si}", "result", E_ERROR_UNAUTHORIZED);
           }
+          json_decref(j_result_profile);
         } else {
           y_log_message(Y_LOG_LEVEL_ERROR, "check_session - Error executing j_query (2)");
           j_return = json_pack("{si}", "result", E_ERROR_DB);
@@ -185,7 +216,8 @@ json_t * init_session(struct config_elements * config, const char * cur_session_
   time_t now;
 
   if (!pthread_mutex_lock(&config->i_session_lock)) {
-    if (i_set_parameter_list(config->i_session, I_OPT_NONCE_GENERATE, 32,
+    if (i_set_parameter_list(config->i_session, I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CODE,
+                                                I_OPT_NONCE_GENERATE, 32,
                                                 I_OPT_STATE_GENERATE, 32,
                                                 I_OPT_NONE) == I_OK) {
       if (i_build_auth_url_get(config->i_session) == I_OK) {
@@ -202,10 +234,10 @@ json_t * init_session(struct config_elements * config, const char * cur_session_
             j_query = json_pack("{sss{sssssss{ss}}}",
                                 "table", ESRAS_TABLE_SESSION,
                                 "values",
-                                  "es_session_hash", session_hash,
-                                  "es_state", i_get_str_parameter(config->i_session, I_OPT_STATE),
-                                  "es_nonce", i_get_str_parameter(config->i_session, I_OPT_NONCE),
-                                  "es_expires_at",
+                                  "s_session_hash", session_hash,
+                                  "s_state", i_get_str_parameter(config->i_session, I_OPT_STATE),
+                                  "s_nonce", i_get_str_parameter(config->i_session, I_OPT_NONCE),
+                                  "s_expires_at",
                                     "raw", expiration_clause);
             o_free(expiration_clause);
             res = h_insert(config->conn, j_query, NULL);
@@ -233,12 +265,12 @@ json_t * init_session(struct config_elements * config, const char * cur_session_
             j_query = json_pack("{sss{sssss{ss}}s{ss}}",
                                 "table", ESRAS_TABLE_SESSION,
                                 "set",
-                                  "es_state", i_get_str_parameter(config->i_session, I_OPT_STATE),
-                                  "es_nonce", i_get_str_parameter(config->i_session, I_OPT_NONCE),
-                                  "es_expires_at",
+                                  "s_state", i_get_str_parameter(config->i_session, I_OPT_STATE),
+                                  "s_nonce", i_get_str_parameter(config->i_session, I_OPT_NONCE),
+                                  "s_expires_at",
                                     "raw", expiration_clause,
                                   "where",
-                                    "es_session_hash", session_hash);
+                                    "s_session_hash", session_hash);
             o_free(expiration_clause);
             res = h_update(config->conn, j_query, NULL);
             json_decref(j_query);
@@ -287,34 +319,35 @@ int validate_session_code(struct config_elements * config, const char * session_
       j_query = json_pack("{sss[ss]s{sssss{ssss}si}}",
                           "table", ESRAS_TABLE_SESSION,
                           "columns",
-                            "es_id",
-                            "es_nonce AS nonce",
+                            "s_id",
+                            "s_nonce AS nonce",
                           "where",
-                            "es_state", state,
-                            "es_session_hash", session_hash,
-                            "es_expires_at",
+                            "s_state", state,
+                            "s_session_hash", session_hash,
+                            "s_expires_at",
                               "operator", "raw",
                               "value", expire_clause,
-                            "es_enabled", 1);
+                            "s_enabled", 1);
       o_free(expire_clause);
       res = h_select(config->conn, j_query, &j_result, NULL);
       json_decref(j_query);
       if (res == H_OK) {
         if (json_array_size(j_result)) {
-          if (i_set_parameter_list(config->i_session, I_OPT_NONCE, json_string_value(json_object_get(json_array_get(j_result, 0), "nonce")),
+          if (i_set_parameter_list(config->i_session, I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CODE,
+                                                      I_OPT_NONCE, json_string_value(json_object_get(json_array_get(j_result, 0), "nonce")),
                                                       I_OPT_STATE, state,
                                                       I_OPT_CODE, code,
                                                       I_OPT_NONE) == I_OK) {
             if (i_run_token_request(config->i_session) == I_OK &&
                 json_string_length(json_object_get(config->i_session->id_token_payload, "sub"))) {
-              if (verify_access_token(config) == E_OK) {
+              if ((res = verify_access_token(config)) == E_OK) {
                 j_query = json_pack("{sss[ss]s{ss}}",
                                     "table", ESRAS_TABLE_PROFILE,
                                     "columns",
-                                      "ep_id",
-                                      "ep_name AS name",
+                                      "p_id",
+                                      "p_name AS name",
                                     "where",
-                                      "ep_sub", json_string_value(json_object_get(config->i_session->id_token_payload, "sub")));
+                                      "p_sub", json_string_value(json_object_get(config->i_session->id_token_payload, "sub")));
                 res = h_select(config->conn, j_query, &j_result_profile, NULL);
                 json_decref(j_query);
                 if (res == H_OK) {
@@ -335,12 +368,12 @@ int validate_session_code(struct config_elements * config, const char * session_
                     j_query = json_pack("{sss{sOs{ss}ss*}s{sO}}",
                                         "table", ESRAS_TABLE_SESSION,
                                         "set",
-                                          "ep_id", json_object_get(json_array_get(j_result_profile, 0), "ep_id"),
-                                          "es_token_expires_at",
+                                          "p_id", json_object_get(json_array_get(j_result_profile, 0), "p_id"),
+                                          "s_token_expires_at",
                                             "raw", expire_clause,
-                                          "es_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
+                                          "s_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
                                         "where",
-                                          "es_id", json_object_get(json_array_get(j_result, 0), "es_id"));
+                                          "s_id", json_object_get(json_array_get(j_result, 0), "s_id"));
                     o_free(expire_clause);
                     res = h_update(config->conn, j_query, NULL);
                     json_decref(j_query);
@@ -349,9 +382,9 @@ int validate_session_code(struct config_elements * config, const char * session_
                         j_query = json_pack("{sss{ss}s{sO}}",
                                             "table", ESRAS_TABLE_PROFILE,
                                             "set",
-                                              "ep_name", json_string_value(json_object_get(config->i_session->id_token_payload, config->oidc_name_claim)),
+                                              "p_name", json_string_value(json_object_get(config->i_session->id_token_payload, config->oidc_name_claim)),
                                             "where",
-                                              "ep_id", json_object_get(json_array_get(j_result_profile, 0), "ep_id"));
+                                              "p_id", json_object_get(json_array_get(j_result_profile, 0), "p_id"));
                         res = h_update(config->conn, j_query, NULL);
                         json_decref(j_query);
                         if (res == H_OK) {
@@ -363,6 +396,15 @@ int validate_session_code(struct config_elements * config, const char * session_
                       } else {
                         ret = E_OK;
                       }
+                      if (i_get_str_parameter(config->i_session, I_OPT_REVOCATION_ENDPOINT) != NULL) {
+                        if (i_set_str_parameter(config->i_session, I_OPT_TOKEN_TARGET, i_get_str_parameter(config->i_session, I_OPT_ACCESS_TOKEN)) == I_OK) {
+                          if (i_revoke_token(config->i_session, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET) != I_OK) {
+                            y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error i_revoke_token");
+                          }
+                        } else {
+                          y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error setting target token");
+                        }
+                      }
                     } else {
                       y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error executing j_query (6)");
                       ret = E_ERROR_DB;
@@ -371,8 +413,8 @@ int validate_session_code(struct config_elements * config, const char * session_
                     j_query = json_pack("{sss{ssss*}}",
                                         "table", ESRAS_TABLE_PROFILE,
                                         "values",
-                                          "ep_sub", json_string_value(json_object_get(config->i_session->id_token_payload, "sub")),
-                                          "ep_name", json_string_value(json_object_get(config->i_session->id_token_payload, config->oidc_name_claim)));
+                                          "p_sub", json_string_value(json_object_get(config->i_session->id_token_payload, "sub")),
+                                          "p_name", json_string_value(json_object_get(config->i_session->id_token_payload, config->oidc_name_claim)));
                     res = h_insert(config->conn, j_query, NULL);
                     json_decref(j_query);
                     if (res == H_OK) {
@@ -394,17 +436,24 @@ int validate_session_code(struct config_elements * config, const char * session_
                         j_query = json_pack("{sss{sOs{ss}ss*}s{sO}}",
                                             "table", ESRAS_TABLE_SESSION,
                                             "set",
-                                              "ep_id", j_last_id,
-                                              "es_token_expires_at",
+                                              "p_id", j_last_id,
+                                              "s_token_expires_at",
                                                 "raw", expire_clause,
-                                              "es_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
+                                              "s_refresh_token", i_get_str_parameter(config->i_session, I_OPT_REFRESH_TOKEN),
                                             "where",
-                                              "es_id", json_object_get(json_array_get(j_result, 0), "es_id"));
-                        char * query;
-                        res = h_update(config->conn, j_query, &query);
-                        y_log_message(Y_LOG_LEVEL_DEBUG, "query %s", query);
+                                              "s_id", json_object_get(json_array_get(j_result, 0), "s_id"));
+                        res = h_update(config->conn, j_query, NULL);
                         json_decref(j_query);
                         if (res == H_OK) {
+                          if (i_get_str_parameter(config->i_session, I_OPT_REVOCATION_ENDPOINT) != NULL) {
+                            if (i_set_str_parameter(config->i_session, I_OPT_TOKEN_TARGET, i_get_str_parameter(config->i_session, I_OPT_ACCESS_TOKEN)) == I_OK) {
+                              if (i_revoke_token(config->i_session, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET) != I_OK) {
+                                y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error i_revoke_token");
+                              }
+                            } else {
+                              y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error setting target token");
+                            }
+                          }
                           ret = E_OK;
                         } else {
                           y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error executing j_query (4)");
@@ -424,6 +473,8 @@ int validate_session_code(struct config_elements * config, const char * session_
                   y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error executing j_query (2)");
                   ret = E_ERROR_DB;
                 }
+              } else if (res == E_ERROR_UNAUTHORIZED) {
+                ret = E_ERROR_UNAUTHORIZED;
               } else {
                 y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error verify_access_token");
                 ret = E_ERROR;
@@ -452,6 +503,63 @@ int validate_session_code(struct config_elements * config, const char * session_
     pthread_mutex_unlock(&config->i_session_lock);
   } else {
     y_log_message(Y_LOG_LEVEL_ERROR, "validate_session_code - Error pthread_mutex_lock");
+    ret = E_ERROR;
+  }
+  return ret;
+}
+
+int delete_session(struct config_elements * config, const char * session_id) {
+  char session_hash[64] = {0};
+  json_t * j_query, * j_result;
+  int res, ret;
+  
+  if (generate_hash(session_id, session_hash)) {
+    if (i_get_str_parameter(config->i_session, I_OPT_REVOCATION_ENDPOINT) != NULL) {
+      if (!pthread_mutex_lock(&config->i_session_lock)) {
+        j_query = json_pack("{sss[s]s{sssi}}",
+                            "table", ESRAS_TABLE_SESSION,
+                            "columns",
+                              "s_refresh_token AS refresh_token",
+                            "where",
+                              "s_session_hash", session_hash,
+                              "s_enabled", 1);
+        res = h_select(config->conn, j_query, &j_result, NULL);
+        json_decref(j_query);
+        if (res == H_OK) {
+          if (i_get_str_parameter(config->i_session, I_OPT_REVOCATION_ENDPOINT) != NULL) {
+            if (i_set_str_parameter(config->i_session, I_OPT_TOKEN_TARGET, json_string_value(json_object_get(json_array_get(j_result, 0), "refresh_token"))) == I_OK) {
+              if (i_revoke_token(config->i_session, I_INTROSPECT_REVOKE_AUTH_CLIENT_TARGET) != I_OK) {
+                y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error i_revoke_token");
+              }
+            } else {
+              y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error setting target token");
+            }
+          }
+          json_decref(j_result);
+        } else {
+          y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error executing j_query (1)");
+        }
+        pthread_mutex_unlock(&config->i_session_lock);
+      } else {
+        y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error pthread_mutex_lock");
+      }
+    }
+    j_query = json_pack("{sss{si}s{ss}}",
+                        "table", ESRAS_TABLE_SESSION,
+                        "set",
+                          "s_enabled", 0,
+                        "where",
+                          "s_session_hash", session_hash);
+    res = h_update(config->conn, j_query, NULL);
+    json_decref(j_query);
+    if (res == H_OK) {
+      ret = E_OK;
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error executing j_query (2)");
+      ret = E_ERROR_DB;
+    }
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "delete_session - Error generate_hash");
     ret = E_ERROR;
   }
   return ret;
