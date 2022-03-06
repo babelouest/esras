@@ -1,0 +1,62 @@
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Esras</title>
+    <meta name="keywords" content="esras">
+    <meta name="description" content="OAuth2/OIDC client program">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="referrer" content="no-referrer">
+
+    <link rel="stylesheet" href="../../css/bootstrap.min.css">
+    <link rel="stylesheet" href="../../css/fork-awesome.min.css">
+    <link rel="stylesheet" href="../../css/v5-compat.min.css">
+    <link rel="stylesheet" href="../../css/esras.css">
+  </head>
+  <body>
+    <h5>Consider questioning authority, please.</h5>
+  </body>
+  <script>
+    function getQueryParams(qs) {
+      qs = qs.split('+').join(' ');
+
+      var params = {},
+        tokens,
+        re = /[?&]?([^=]+)=([^&]*)/g;
+
+      while (tokens = re.exec(qs)) {
+        params[decodeURIComponent(tokens[1])] = decodeURIComponent(tokens[2]);
+      }
+
+      return params;
+    }
+
+    window.onload = function() {
+      let urlParams = getQueryParams(window.location.search.substring(1));
+      $.ajax({
+        method: "POST",
+        url: document.location.href,
+        data: { 
+          redirectTo: document.location.href,
+          state: urlParams['state']
+        }
+      })
+      .then((res) => {
+        document.location.href = res.url;
+      });
+    };
+  </script>
+  <script src="../../js/jquery.min.js"></script>
+  <script src="../../js/bootstrap.bundle.min.js"></script>
+</html>
+<!--
+ * 
+ * Esras
+ *
+ * Test Client Callback page
+ *
+ * Copyright 2022 Nicolas Mora <mail@babelouest.org>
+ * 
+ * The front-end application is under AGPL License
+ * 
+ -->
