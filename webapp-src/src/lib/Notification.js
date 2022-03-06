@@ -46,19 +46,19 @@ class Notification extends Component {
     this.state.message.forEach((message, index) => {
       var icon;
       if (message.type === "success") {
-        icon = <i className="fa fa-check-square-o btn-icon text-success"></i>;
+        icon = <i className="fa fa-check-square-o text-success elt-left"></i>;
       } else if (message.type === "danger") {
-        icon = <i className="fa fa-exclamation-circle text-danger btn-icon"></i>;
+        icon = <i className="fa fa-exclamation-circle text-danger elt-left"></i>;
       } else if (message.type === "warning") {
-        icon = <i className="fa fa-exclamation-triangle text-warning btn-icon"></i>;
+        icon = <i className="fa fa-exclamation-triangle text-warning elt-left"></i>;
       } else { // info
-        icon = <i className="fa fa-info-circle btn-icon text-info"></i>;
+        icon = <i className="fa fa-info-circle elt-left text-info"></i>;
       }
       toast.push(
         <div className="toast" role="alert" aria-live="assertive" aria-atomic="true" key={index} id={"toast-"+message.id}>
           <div className="toast-header">
             {icon}
-            <strong className="me-auto">Hutch</strong>
+            <strong className="me-auto">Esras</strong>
             <button aria-label="Close" className="btn-close" data-bs-dismiss="toast" type="button" onClick={(e) => this.close(message.id)}>
             </button>
           </div>

@@ -40,4 +40,4 @@ build-webapp:
 
 install-webapp:
 	find $(WEBAPP_DEST) ! -name webapp ! -name .gitignore -delete
-	cp -R dist/css/ dist/favicon.ico dist/fonts/ dist/bundle.js dist/bundle.js.LICENSE.txt dist/img/ dist/index.html dist/js/ dist/locales/ $(WEBAPP_DEST)
+	cp -R dist/css/ dist/favicon.ico dist/fonts/ dist/bundle.js dist/bundle.js.LICENSE.txt dist/img/ dist/index.html dist/callback.html dist/js/ dist/locales/ $(WEBAPP_DEST)

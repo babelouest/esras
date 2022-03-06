@@ -1,6 +1,6 @@
 {
 	"name": "esras",
-	"version": "0.0.1",
+	"version": "0.2.0",
 	"description": "OAuth2/OIDC client",
 	"main": "src/index.js",
 	"author": "Nicolas Mora",

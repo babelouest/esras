@@ -23,6 +23,10 @@ module.exports = {
   devServer: {
     static: path.resolve(__dirname, './dist'),
     hot: true,
+    headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "OPTIONS, GET, POST, PUT, PATCH, DELETE"
+    },
     compress: true,
     port: 3000,
     host: 'localhost',

@@ -22,7 +22,7 @@ class TopMenu extends Component {
   
   navigateTo(e, menu) {
     e.preventDefault();
-    routage.addRoute(menu||"");
+    routage.addRoute("esras/"+menu||"esras/");
     messageDispatcher.sendMessage("App", {action: 'nav', target: menu});
   }
   

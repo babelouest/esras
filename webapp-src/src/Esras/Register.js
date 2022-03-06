@@ -4,21 +4,20 @@ import i18next from 'i18next';
 
 import messageDispatcher from '../lib/MessageDispatcher';
 import apiManager from '../lib/APIManager';
+import routage from '../lib/Routage';
 
 class Register extends Component {
   constructor(props) {
     super(props);
 
-    let redirectUriEsras = window.location.href.substring(0, window.location.href.lastIndexOf('/')) + "/api/client/redirect";
     this.state = {
       client: props.client,
-      redirectUriEsras: redirectUriEsras,
       redirectUri: "",
       allowAddRedirectUri: false,
       pubKey: props.client.jwks?JSON.stringify(props.client.jwks):"",
       pubKeyValid: true
     };
-
+    
     this.verifyRegistration = this.verifyRegistration.bind(this);
     this.changeText = this.changeText.bind(this);
     this.changeRedirectUri = this.changeRedirectUri.bind(this);
@@ -29,6 +28,7 @@ class Register extends Component {
     this.changeAuthMethod = this.changeAuthMethod.bind(this);
     this.setPubKeyValid = this.setPubKeyValid.bind(this);
     this.toggleGrantType = this.toggleGrantType.bind(this);
+    this.changeTokenSigningAlg = this.changeTokenSigningAlg.bind(this);
   }
 
   static getDerivedStateFromProps(props, state) {
@@ -109,6 +109,9 @@ class Register extends Component {
         pubKeyValid = false;
       }
     }
+    if ((client.token_endpoint_auth_method === "private_key_jwt" || client.token_endpoint_auth_method === "client_secret_jwt") && !client.token_endpoint_signing_alg) {
+      pubKeyValid = false;
+    }
     this.setState({pubKeyValid: pubKeyValid});
   }
 
@@ -131,6 +134,12 @@ class Register extends Component {
     }
     this.setState({client: client});
   }
+  
+  changeTokenSigningAlg(e) {
+    let client = this.state.client;
+    client.token_endpoint_signing_alg = e.target.value;
+    this.setState({client: client});
+  }
 
   verifyRegistration(e) {
     e.preventDefault();
@@ -138,26 +147,31 @@ class Register extends Component {
       if (!this.state.client.client_id) {
         apiManager.request("client", "POST", this.state.client)
         .then(() => {
+          messageDispatcher.sendMessage("Notification", {type: "success", message: i18next.t("register_client_success")});
+          routage.addRoute("esras/list");
           messageDispatcher.sendMessage("App", {action: 'nav', target: "reload"});
         })
         .fail(() => {
-          messageDispatcher.sendMessage("Notification", {type: "success", message: i18next.t("register_client_error")});
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("register_client_error")});
         });
       } else {
         apiManager.request("client/" + this.state.client.client_id, "PUT", this.state.client)
         .then(() => {
+          messageDispatcher.sendMessage("Notification", {type: "success", message: i18next.t("register_client_success")});
+          routage.addRoute("esras/list");
           messageDispatcher.sendMessage("App", {action: 'nav', target: "reload"});
         })
         .fail(() => {
-          messageDispatcher.sendMessage("Notification", {type: "success", message: i18next.t("register_client_error")});
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("register_client_error")});
         });
       }
     } else {
-      messageDispatcher.sendMessage("Notification", {type: "success", message: i18next.t("register_client_jwks_required")});
+      messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("register_client_jwks_required")});
     }
   }
 
   cancelRegistration() {
+    routage.addRoute("esras/list");
     messageDispatcher.sendMessage("App", {action: 'nav', target: "list"});
   }
 
@@ -249,11 +263,11 @@ class Register extends Component {
             <input type="checkbox" className="form-check-input" id="delete_token" checked={this.state.client.grant_types.indexOf('delete_token')>-1} onChange={(e) => this.toggleGrantType(e, 'delete_token')}/>
             <label className="form-check-label" htmlFor="delete_token">delete_token</label>
           </div>
-          <div className="form-group form-check">
+          {/*<div className="form-group form-check">
             <input type="checkbox" className="form-check-input" id="device_authorization" checked={this.state.client.grant_types.indexOf('device_authorization')>-1} onChange={(e) => this.toggleGrantType(e, 'device_authorization')}/>
             <label className="form-check-label" htmlFor="device_authorization">device_authorization</label>
           </div>
-          <small id="grantTypesHelp" className="form-text text-muted">{i18next.t("register_client_grant_types_help")}</small>
+          <small id="grantTypesHelp" className="form-text text-muted">{i18next.t("register_client_grant_types_help")}</small>*/}
           <hr/>
           <div className="form-group">
             <label htmlFor="grantTypes">{i18next.t("register_client_response_types")}</label>
@@ -271,10 +285,30 @@ class Register extends Component {
             <label className="form-check-label" htmlFor="id_token">id_token</label>
           </div>
           <hr/>
-          <div className="form-check">
+          <div className="form-group">
             <label htmlFor="client_jwks">{i18next.t("register_client_jwks")}</label>
             <textarea className="form-control" id="client_jwks" placeholder="{  keys: [  {  kty:[...]" value={this.state.pubKey} onChange={(e) => this.changePubkey(e)}/>
             <small id="jwksHelp" className="form-text text-muted">{i18next.t("register_client_jwks_help")}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="authMethod">{i18next.t("register_client_token_endpoint_signing_alg")}</label>
+            <select className="form-control" id="authMethod" value={this.state.client.token_endpoint_signing_alg} onChange={this.changeTokenSigningAlg}>
+              <option value="">None</option>
+              <option value="HS256">HS256</option>
+              <option value="HS384">HS384</option>
+              <option value="HS512">HS512</option>
+              <option value="RS256">RS256</option>
+              <option value="RS384">RS384</option>
+              <option value="RS512">RS512</option>
+              <option value="ES256">ES256</option>
+              <option value="ES384">ES384</option>
+              <option value="ES512">ES512</option>
+              <option value="PS256">PS256</option>
+              <option value="PS384">PS384</option>
+              <option value="PS512">PS512</option>
+              <option value="EdDSA">EdDSA</option>
+            </select>
+            <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_token_endpoint_signing_alg_help")}</small>
             {errorJwks}
           </div>
           <hr/>
