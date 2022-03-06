@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS e_client_session;
 DROP TABLE IF EXISTS e_client_redirect_uri;
 DROP TABLE IF EXISTS e_client;
 DROP TABLE IF EXISTS session;
@@ -43,3 +44,14 @@ CREATE TABLE e_client_redirect_uri (
   ecru_redirect_uri VARCHAR(512),
   FOREIGN KEY(ec_id) REFERENCES e_client(ec_id) ON DELETE CASCADE
 );
+
+CREATE TABLE e_client_session (
+  ecs_id INT(11) PRIMARY KEY AUTO_INCREMENT,
+  s_id INT(11) NOT NULL,
+  ec_id INT(11) NOT NULL,
+  ecs_state VARCHAR(128),
+  ecs_session MEDIUMBLOB,
+  FOREIGN KEY(s_id) REFERENCES session(s_id) ON DELETE CASCADE,
+  FOREIGN KEY(ec_id) REFERENCES e_client(ec_id) ON DELETE CASCADE
+);
+CREATE INDEX i_ecs_state ON e_client_session(ecs_state);
