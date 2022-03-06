@@ -25,7 +25,7 @@
 #ifndef __ESRAS_H_
 #define __ESRAS_H_
 
-#define _ESRAS_VERSION_ "0.2.0"
+#define _ESRAS_VERSION_ "0.9.9"
 
 /** Angharad libraries **/
 #include <yder.h>
