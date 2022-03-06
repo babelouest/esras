@@ -22,6 +22,29 @@
 
 #include "esras.h"
 
+#define CHUNK 0x4000
+
+/**
+ * Streaming callback function to ease sending large files
+ */
+static ssize_t callback_static_file_uncompressed_stream(void * cls, uint64_t pos, char * buf, size_t max) {
+  (void)(pos);
+  if (cls != NULL) {
+    return fread (buf, sizeof(char), max, (FILE *)cls);
+  } else {
+    return U_STREAM_END;
+  }
+}
+
+/**
+ * Cleanup FILE* structure when streaming is complete
+ */
+static void callback_static_file_uncompressed_stream_free(void * cls) {
+  if (cls != NULL) {
+    fclose((FILE *)cls);
+  }
+}
+
 /**
  * OPTIONS callback function
  * Send mandatory parameters for browsers to call REST APIs
@@ -157,7 +180,7 @@ int callback_esras_add_client (const struct _u_request * request, struct _u_resp
   json_t * j_client = ulfius_get_json_body_request(request, NULL), * j_result;
   
   if (!pthread_mutex_lock(&config->i_session_lock)) {
-    if (is_client_registration_valid(j_client) == I_OK) {
+    if (is_client_registration_valid(config, j_client) == I_OK) {
       j_result = register_client(config, j_client);
       if (check_result_value(j_result, E_OK)) {
         if (add_client(config, json_object_get(j_result, "registration"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id"))) != E_OK) {
@@ -189,7 +212,7 @@ int callback_esras_set_client (const struct _u_request * request, struct _u_resp
   json_t * j_client = ulfius_get_json_body_request(request, NULL), * j_result, * j_client_database = get_client(config, u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
   
   if (check_result_value(j_client_database, E_OK)) {
-    if (is_client_registration_valid(j_client) == I_OK) {
+    if (is_client_registration_valid(config, j_client) == I_OK) {
       j_result = update_client_registration(config, json_object_get(j_client_database, "client"), j_client);
       if (check_result_value(j_result, E_OK)) {
         if (set_client(config, json_object_get(j_result, "registration"), json_integer_value(json_object_get(json_object_get(j_client_database, "client"), "ec_id"))) != E_OK) {
@@ -245,3 +268,215 @@ int callback_esras_disable_client (const struct _u_request * request, struct _u_
 
   return U_CALLBACK_CONTINUE;
 }
+
+int callback_esras_oidc_config (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = json_pack("{sO*sO*ss*}", "config", config->j_server_config, "jwks", config->j_server_jwks, "test_client_redirect_uri", config->test_client_redirect_uri);
+  
+  ulfius_set_json_body_response(response, 200, j_result);
+  json_decref(j_result);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_get_session (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_session = exec_get_i_session(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+  
+  if (check_result_value(j_session, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_session, "session"));
+  } else if (check_result_value(j_session, E_ERROR_NOT_FOUND)) {
+    response->status = 404;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_set_session - Error exec_get_i_session");
+    response->status = 500;
+  }
+  json_decref(j_session);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_set_session (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_session = ulfius_get_json_body_request(request, NULL);
+  int res;
+  
+  if ((res = exec_set_i_session(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")), j_session)) == E_ERROR_UNAUTHORIZED) {
+    response->status = 403;
+  } else if (res != E_OK) {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_set_session - Error exec_set_i_session");
+    response->status = 500;
+  }
+  json_decref(j_session);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_generate(const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  int res;
+
+  if ((res = exec_generate(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")), u_map_get(request->map_url, "property"))) == E_ERROR_NOT_FOUND) {
+    response->status = 404;
+  } else if (res == E_ERROR_PARAM) {
+    response->status = 400;
+  } else if (res == E_ERROR_UNAUTHORIZED) {
+    response->status = 403;
+  } else if (res != E_OK) {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_generate - Error exec_generate");
+    response->status = 500;
+  }
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_auth (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_auth(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "auth"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    response->status = 400;
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_auth - Error exec_run_auth");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_callback (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(request);
+  struct config_elements * config = (struct config_elements *)user_data;
+  char * path = msprintf("%s/%s", config->static_file_config->files_path, config->test_callback_page);
+  size_t length;
+  FILE * f;
+
+  f = fopen (path, "rb");
+  if (f) {
+    u_map_put(response->map_header, "Content-Type", "text/html");
+    fseek (f, 0, SEEK_END);
+    length = ftell (f);
+    fseek (f, 0, SEEK_SET);
+    if (ulfius_set_stream_response(response, 200, callback_static_file_uncompressed_stream, callback_static_file_uncompressed_stream_free, length, CHUNK, f) != U_OK) {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_callback File Server - Error ulfius_set_stream_response");
+    }
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_callback - Error opening file '%s'", path);
+    response->status = 500;
+  }
+  o_free(path);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_parse_callback (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result, * j_response;
+  char * redirect_to;
+  
+  if (u_map_get(request->map_post_body, "redirectTo") != NULL && u_map_get(request->map_post_body, "state") != NULL) {
+    j_result = exec_parse_callback(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_post_body, "redirectTo"), u_map_get(request->map_post_body, "state"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+    if (check_result_value(j_result, E_OK)) {
+      redirect_to = msprintf("%s#esras/run/%s/token", config->index_url, json_string_value(json_object_get(j_result, "client_id")));
+      j_response = json_pack("{ss}", "url", redirect_to);
+      ulfius_set_json_body_response(response, 200, j_response);
+      json_decref(j_response);
+      o_free(redirect_to);
+    } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+      j_response = json_pack("{ssss}", "error", "Invalid request", "error_description", "Invalid parameter");
+      ulfius_set_json_body_response(response, 400, j_response);
+      json_decref(j_response);
+    } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+      j_response = json_pack("{ssss}", "error", "Invalid request", "error_description", "Unauthorized");
+      ulfius_set_json_body_response(response, 403, j_response);
+      json_decref(j_response);
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_parse_callback - Error exec_parse_callback");
+      response->status = 500;
+    }
+    json_decref(j_result);
+  } else {
+    j_response = json_pack("{ssss}", "error", "Invalid request", "error_description", "No redirectTo URL specified");
+    ulfius_set_json_body_response(response, 400, j_response);
+    json_decref(j_response);
+  }
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_token (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_token(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "token"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "token"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_token - Error exec_run_token");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_userinfo (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_userinfo(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), u_map_has_key_case(request->map_url, "jwt"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "userinfo"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "userinfo"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_token - Error exec_run_userinfo");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_introspect (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_introspection(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), u_map_has_key_case(request->map_url, "jwt"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "introspection"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "introspection"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_token - Error exec_run_introspection");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_revoke (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_revocation(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "introspection"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "introspection"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_revoke - Error exec_run_revocation");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+

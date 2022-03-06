@@ -27,7 +27,7 @@ int verify_access_token(struct config_elements * config) {
   char ** scopes = NULL;
 
   if (config->oidc_is_jwt_access_token) {
-    if (i_verify_jwt_access_token(config->i_session, config->oidc_aud) == I_OK) {
+    if (i_verify_jwt_access_token(config->i_session, NULL) == I_OK) {
       j_introspection = json_incref(config->i_session->access_token_payload);
     }
   } else {
@@ -218,7 +218,9 @@ json_t * init_session(struct config_elements * config, const char * cur_session_
   if (!pthread_mutex_lock(&config->i_session_lock)) {
     if (i_set_parameter_list(config->i_session, I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CODE,
                                                 I_OPT_NONCE_GENERATE, 32,
-                                                I_OPT_STATE_GENERATE, 32,
+                                                I_OPT_STATE_GENERATE, 16,
+                                                I_OPT_AUTH_METHOD, I_AUTH_METHOD_GET,
+                                                I_OPT_TOKEN_METHOD, I_TOKEN_AUTH_METHOD_SECRET_BASIC,
                                                 I_OPT_NONE) == I_OK) {
       if (i_build_auth_url_get(config->i_session) == I_OK) {
         if (create) {
@@ -338,7 +340,7 @@ int validate_session_code(struct config_elements * config, const char * session_
                                                       I_OPT_STATE, state,
                                                       I_OPT_CODE, code,
                                                       I_OPT_NONE) == I_OK) {
-            if (i_run_token_request(config->i_session) == I_OK &&
+            if ((res = i_run_token_request(config->i_session)) == I_OK &&
                 json_string_length(json_object_get(config->i_session->id_token_payload, "sub"))) {
               if ((res = verify_access_token(config)) == E_OK) {
                 j_query = json_pack("{sss[ss]s{ss}}",
@@ -488,7 +490,7 @@ int validate_session_code(struct config_elements * config, const char * session_
             ret = E_ERROR;
           }
         } else {
-          y_log_message(Y_LOG_LEVEL_DEBUG, "Invalid session");
+          y_log_message(Y_LOG_LEVEL_ERROR, "Invalid session");
           ret = E_ERROR_UNAUTHORIZED;
         }
         json_decref(j_result);
@@ -497,7 +499,7 @@ int validate_session_code(struct config_elements * config, const char * session_
         ret = E_ERROR_DB;
       }
     } else {
-      y_log_message(Y_LOG_LEVEL_DEBUG, "Error session");
+      y_log_message(Y_LOG_LEVEL_ERROR, "Error session");
       ret = E_ERROR_UNAUTHORIZED;
     }
     pthread_mutex_unlock(&config->i_session_lock);

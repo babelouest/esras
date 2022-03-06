@@ -25,7 +25,7 @@
 #ifndef __ESRAS_H_
 #define __ESRAS_H_
 
-#define _ESRAS_VERSION_ "0.0.1"
+#define _ESRAS_VERSION_ "0.2.0"
 
 /** Angharad libraries **/
 #include <yder.h>
@@ -37,18 +37,20 @@
 #include "static_compressed_inmemory_website_callback.h"
 #include "http_compression_callback.h"
 
-#define ESRAS_DEFAULT_PORT               3777
-#define ESRAS_DEFAULT_PREFIX             "api"
-#define ESRAS_DEFAULT_INDEX              "index.html"
-#define ESRAS_DEFAULT_SESSION_EXPIRATION 604800
-#define ESRAS_SESSION_LENGTH             128
-#define ESRAS_LOG_NAME                   "ESRAS"
-#define ESRAS_DEFAULT_TOKEN_EXPIRE       3600
+#define ESRAS_DEFAULT_PORT                 3777
+#define ESRAS_DEFAULT_PREFIX               "api"
+#define ESRAS_DEFAULT_INDEX                "index.html"
+#define ESRAS_DEFAULT_SESSION_EXPIRATION   604800
+#define ESRAS_SESSION_LENGTH               128
+#define ESRAS_LOG_NAME                     "ESRAS"
+#define ESRAS_DEFAULT_TOKEN_EXPIRE         3600
+#define ESRAS_SERVER_JWKS_CACHE_EXPIRATION 86400
 
 #define ESRAS_TABLE_PROFILE             "profile"
 #define ESRAS_TABLE_SESSION             "session"
 #define ESRAS_TABLE_CLIENT              "e_client"
 #define ESRAS_TABLE_CLIENT_REDIRECT_URI "e_client_redirect_uri"
+#define ESRAS_TABLE_CLIENT_SESSION      "e_client_session"
 
 #define ESRAS_STOP     0
 #define ESRAS_ERROR    1
@@ -97,17 +99,9 @@ struct config_elements {
   char                                         * cookie_domain;
   unsigned int                                   cookie_secure;
   char                                         * oidc_server_remote_config;
-  char                                         * oidc_server_auth_endpoint;
-  char                                         * oidc_server_token_endpoint;
-  char                                         * oidc_server_token_introspection;
   unsigned int                                   oidc_server_verify_cert;
-  char                                         * oidc_server_public_jwks;
-  char                                         * oidc_scope;
-  char                                         * oidc_iss;
-  char                                         * oidc_realm;
-  char                                         * oidc_aud;
-  time_t                                         oidc_dpop_max_iat;
   char                                         * oidc_name_claim;
+  char                                         * oidc_scope;
   unsigned int                                   oidc_is_jwt_access_token;
   char                                         * client_id;
   char                                         * client_redirect_uri;
@@ -120,6 +114,11 @@ struct config_elements {
   struct _u_instance                           * instance;
 	struct _u_compressed_inmemory_website_config * static_file_config;
   struct _i_session                            * i_session;
+  json_t                                       * j_session_for_test;
+  json_t                                       * j_server_config;
+  json_t                                       * j_server_jwks;
+  char                                         * test_client_redirect_uri;
+  char                                         * test_callback_page;
   char                                         * register_scope;
   char                                         * register_access_token;
   time_t                                         register_access_token_expiration;
@@ -151,11 +150,23 @@ int validate_session_code(struct config_elements * config, const char * session_
 
 json_t * list_client(struct config_elements * config, json_int_t p_id);
 json_t * get_client(struct config_elements * config, const char * client_id, json_int_t p_id);
+json_t * get_client_from_id(struct config_elements * config, json_int_t ec_id);
 int add_client(struct config_elements * config, json_t * j_client, json_int_t p_id);
 int set_client(struct config_elements * config, json_t * j_client, json_int_t ec_id);
 int disable_client(struct config_elements * config, json_int_t ec_id);
 
-int is_client_registration_valid(json_t * j_client);
+int exec_set_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, json_t * j_session);
+json_t * exec_get_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_get_i_session_from_state(struct config_elements * config, const char * session_id, const char * state, json_int_t p_id);
+int exec_generate(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, const char * property);
+json_t * exec_run_auth(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_parse_callback(struct config_elements * config, const char * session_id, const char * redirect_to, const char * state, json_int_t p_id);
+json_t * exec_run_token(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_run_userinfo(struct config_elements * config, const char * session_id, const char * client_id, int get_jwt, json_int_t p_id);
+json_t * exec_run_introspection(struct config_elements * config, const char * session_id, const char * client_id, int get_jwt, json_int_t p_id);
+json_t * exec_run_revocation(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+
+int is_client_registration_valid(struct config_elements * config, json_t * j_client);
 json_t * register_client(struct config_elements * config, json_t * j_client);
 json_t * update_client_registration(struct config_elements * config, json_t * j_client_database, json_t * j_registration);
 int disable_client_registration(struct config_elements * config, json_t * j_client_database);
@@ -169,10 +180,22 @@ int callback_esras_callback_url (const struct _u_request * request, struct _u_re
 
 int callback_esras_profile (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_delete_session (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_oidc_config (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 int callback_esras_list_client (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_add_client (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_set_client (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_disable_client (const struct _u_request * request, struct _u_response * response, void * user_data);
+
+int callback_esras_exec_get_session (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_set_session (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_generate (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_auth (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_callback (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_parse_callback (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_token (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_userinfo (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_introspect (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_revoke (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 #endif
