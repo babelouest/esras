@@ -97,7 +97,7 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
       response->status = 302;
 
       // Uncomment this line if you're working on the frontend
-      y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+      //y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
 
       ret = U_CALLBACK_COMPLETE;
     } else {
