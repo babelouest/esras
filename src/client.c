@@ -325,36 +325,41 @@ json_t * register_client(struct config_elements * config, json_t * j_client) {
   time_t now;
   json_t * j_return = NULL, * j_registration;
   int res;
-  
+  struct _i_session i_session;
+
   time(&now);
-  if (config->register_access_token_expiration < now) {
-    if (i_set_parameter_list(config->i_session, I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CLIENT_CREDENTIALS,
-                                                I_OPT_SCOPE, config->register_scope,
-                                                I_OPT_NONE) == I_OK) {
-      if ((res = i_run_token_request(config->i_session)) == I_OK) {
-        o_free(config->register_access_token);
-        config->register_access_token = o_strdup(i_get_str_parameter(config->i_session, I_OPT_ACCESS_TOKEN));
-        config->register_access_token_expiration = now + i_get_int_parameter(config->i_session, I_OPT_EXPIRES_IN);
-      } else if (res == I_ERROR_PARAM) {
-        j_return = json_pack("{si}", "result", I_ERROR_PARAM);
+  if (i_init_session(&i_session) == I_OK) {
+    if (i_session_setup_registration(config, &i_session) == E_OK) {
+      if (i_set_response_type(&i_session, I_RESPONSE_TYPE_CLIENT_CREDENTIALS) == I_OK) {
+        if ((res = i_run_token_request(&i_session)) == I_OK) {
+          if ((res = i_register_client(&i_session, j_client, 0, &j_registration)) == I_OK) {
+            j_return = json_pack("{siso}", "result", E_OK, "registration", j_registration);
+          } else if (res == I_ERROR_PARAM) {
+            y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_register_client: %s - %s", i_get_str_parameter(&i_session, I_OPT_ERROR), i_get_str_parameter(&i_session, I_OPT_ERROR_DESCRIPTION));
+            j_return = json_pack("{si}", "result", E_ERROR_PARAM);
+          } else {
+            y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_register_client %d", res);
+            j_return = json_pack("{si}", "result", E_ERROR);
+          }
+        } else if (res == I_ERROR_PARAM) {
+          y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_run_token_request: %s - %s", i_get_str_parameter(&i_session, I_OPT_ERROR), i_get_str_parameter(&i_session, I_OPT_ERROR_DESCRIPTION));
+          j_return = json_pack("{si}", "result", E_ERROR_PARAM);
+        } else {
+          y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_run_token_request");
+          j_return = json_pack("{si}", "result", E_ERROR);
+        }
       } else {
-        y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_run_token_request");
+        y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_set_parameter_list");
         j_return = json_pack("{si}", "result", E_ERROR);
       }
     } else {
-      y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_set_parameter_list");
+      y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_session_setup_registration");
       j_return = json_pack("{si}", "result", E_ERROR);
     }
-  }
-  if (j_return == NULL) {
-    if ((res = i_register_client(config->i_session, j_client, 0, &j_registration)) == I_OK) {
-      j_return = json_pack("{siso}", "result", E_OK, "registration", j_registration);
-    } else if (res == I_ERROR_PARAM) {
-      j_return = json_pack("{si}", "result", I_ERROR_PARAM);
-    } else {
-      y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_register_client %d", res);
-      j_return = json_pack("{si}", "result", E_ERROR);
-    }
+    i_clean_session(&i_session);
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "register_client - Error i_init_session");
+    j_return = json_pack("{si}", "result", E_ERROR);
   }
   return j_return;
 }
@@ -364,10 +369,9 @@ json_t * update_client_registration(struct config_elements * config, json_t * j_
   struct _i_session i_session;
   int res;
   
-  if (i_init_session(&i_session) == I_OK) {
+  if (i_init_session(&i_session) == I_OK && i_set_server_configuration(&i_session, config->j_server_config) == I_OK) {
     if (i_set_parameter_list(&i_session, I_OPT_ACCESS_TOKEN, json_string_value(json_object_get(j_client_database, "registration_access_token")),
                                          I_OPT_REGISTRATION_CLIENT_URI, json_string_value(json_object_get(j_client_database, "registration_client_uri")),
-                                         I_OPT_REGISTRATION_ENDPOINT, i_get_str_parameter(config->i_session, I_OPT_REGISTRATION_ENDPOINT),
                                          I_OPT_CLIENT_ID, json_string_value(json_object_get(j_client_database, "client_id")),
                                          I_OPT_NONE) == I_OK) {
       json_object_del(j_registration, "client_secret");
@@ -397,10 +401,9 @@ int disable_client_registration(struct config_elements * config, json_t * j_clie
   struct _i_session i_session;
   int ret, res;
   
-  if (i_init_session(&i_session) == I_OK) {
+  if (i_init_session(&i_session) == I_OK && i_set_server_configuration(&i_session, config->j_server_config) == I_OK) {
     if (i_set_parameter_list(&i_session, I_OPT_ACCESS_TOKEN, json_string_value(json_object_get(j_client_database, "registration_access_token")),
                                          I_OPT_REGISTRATION_CLIENT_URI, json_string_value(json_object_get(j_client_database, "registration_client_uri")),
-                                         I_OPT_REGISTRATION_ENDPOINT, i_get_str_parameter(config->i_session, I_OPT_REGISTRATION_ENDPOINT),
                                          I_OPT_CLIENT_ID, json_string_value(json_object_get(j_client_database, "client_id")),
                                          I_OPT_NONE) == I_OK) {
       if ((res = i_delete_registration_client(&i_session)) == I_OK) {

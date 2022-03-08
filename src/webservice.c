@@ -179,28 +179,22 @@ int callback_esras_add_client (const struct _u_request * request, struct _u_resp
   struct config_elements * config = (struct config_elements *)user_data;
   json_t * j_client = ulfius_get_json_body_request(request, NULL), * j_result;
   
-  if (!pthread_mutex_lock(&config->i_session_lock)) {
-    if (is_client_registration_valid(config, j_client) == I_OK) {
-      j_result = register_client(config, j_client);
-      if (check_result_value(j_result, E_OK)) {
-        if (add_client(config, json_object_get(j_result, "registration"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id"))) != E_OK) {
-          y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error add_client");
-          response->status = 500;
-        }
-      } else if (check_result_value(j_result, E_ERROR_PARAM)) {
-        response->status = 400;
-      } else {
-        y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error register_client");
+  if (is_client_registration_valid(config, j_client) == I_OK) {
+    j_result = register_client(config, j_client);
+    if (check_result_value(j_result, E_OK)) {
+      if (add_client(config, json_object_get(j_result, "registration"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id"))) != E_OK) {
+        y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error add_client");
         response->status = 500;
       }
-      json_decref(j_result);
-    } else {
+    } else if (check_result_value(j_result, E_ERROR_PARAM)) {
       response->status = 400;
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error register_client");
+      response->status = 500;
     }
-    pthread_mutex_unlock(&config->i_session_lock);
+    json_decref(j_result);
   } else {
-    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error pthread_mutex_lock");
-    response->status = 500;
+    response->status = 400;
   }
   json_decref(j_client);
 

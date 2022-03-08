@@ -113,16 +113,11 @@ struct config_elements {
   struct _h_connection                         * conn;
   struct _u_instance                           * instance;
 	struct _u_compressed_inmemory_website_config * static_file_config;
-  struct _i_session                            * i_session;
-  json_t                                       * j_session_for_test;
   json_t                                       * j_server_config;
   json_t                                       * j_server_jwks;
   char                                         * test_client_redirect_uri;
   char                                         * test_callback_page;
   char                                         * register_scope;
-  char                                         * register_access_token;
-  time_t                                         register_access_token_expiration;
-  pthread_mutex_t                                i_session_lock;
 };
 
 // Main functions and misc functions
@@ -140,6 +135,9 @@ const char * get_ip_source(const struct _u_request * request);
 int generate_hash(const char * data, char * output);
 char * rand_string(char * str, size_t str_size);
 char * rand_string_from_charset(char * str, size_t str_size, const char * charset);
+
+int i_session_setup_connection(struct config_elements * config, struct _i_session * i_session);
+int i_session_setup_registration(struct config_elements * config, struct _i_session * i_session);
 
 int check_result_value(json_t * result, const int value);
 

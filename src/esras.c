@@ -47,7 +47,7 @@ pthread_cond_t  global_handler_close_cond;
 int main (int argc, char ** argv) {
   struct config_elements * config = o_malloc(sizeof(struct config_elements));
   int res;
-  pthread_mutexattr_t mutexattr;
+  struct _i_session i_session;
 
   srand(time(NULL));
   if (config == NULL) {
@@ -67,14 +67,10 @@ int main (int argc, char ** argv) {
   config->instance = o_malloc(sizeof(struct _u_instance));
   config->allow_origin = NULL;
   config->static_file_config = o_malloc(sizeof(struct _u_compressed_inmemory_website_config));
-  config->i_session = o_malloc(sizeof(struct _i_session));
-  config->j_session_for_test = NULL;
   config->j_server_config = NULL;
   config->j_server_jwks = NULL;
   config->client_redirect_uri = NULL;
   config->register_scope = NULL;
-  config->register_access_token = NULL;
-  config->register_access_token_expiration = 0;
   config->use_secure_connection = 0;
   config->secure_connection_key_file = NULL;
   config->secure_connection_pem_file = NULL;
@@ -95,8 +91,8 @@ int main (int argc, char ** argv) {
   config->client_auth_method = I_TOKEN_AUTH_METHOD_SECRET_BASIC;
   config->client_token_auth_method = I_AUTH_METHOD_GET;
   config->client_sign_alg = NULL;
-  if (config->instance == NULL || config->static_file_config == NULL || config->i_session == NULL) {
-    fprintf(stderr, "Memory error - config->instance || config->static_file_config || config->i_session\n");
+  if (config->instance == NULL || config->static_file_config == NULL) {
+    fprintf(stderr, "Memory error - config->instance || config->static_file_config\n");
     o_free(config);
     return 1;
   }
@@ -117,7 +113,7 @@ int main (int argc, char ** argv) {
   }
   u_map_put(&config->static_file_config->mime_types, "*", "application/octet-stream");
 
-  if (i_init_session(config->i_session) != I_OK) {
+  if (i_init_session(&i_session) != I_OK) {
     fprintf(stderr, "Error i_init_session\n");
     print_help(stderr);
     exit_server(&config, ESRAS_ERROR);
@@ -149,46 +145,22 @@ int main (int argc, char ** argv) {
   }
 
   if (!config->oidc_server_verify_cert) {
-    i_set_int_parameter(config->i_session, I_OPT_REMOTE_CERT_FLAG, I_REMOTE_VERIFY_NONE);
+    i_set_int_parameter(&i_session, I_OPT_REMOTE_CERT_FLAG, I_REMOTE_VERIFY_NONE);
   }
-  if (i_set_str_parameter(config->i_session, I_OPT_OPENID_CONFIG_ENDPOINT, config->oidc_server_remote_config) != I_OK || i_get_openid_config(config->i_session) != I_OK) {
+  if (i_set_str_parameter(&i_session, I_OPT_OPENID_CONFIG_ENDPOINT, config->oidc_server_remote_config) != I_OK || i_get_openid_config(&i_session) != I_OK) {
     fprintf(stderr, "Error initializing i_session\n");
     exit_server(&config, ESRAS_ERROR);
   } else {
     y_log_message(Y_LOG_LEVEL_INFO, "Loading OpenID Config Endpoint %s", config->oidc_server_remote_config);
   }
-  if ((config->j_session_for_test = i_export_session_json_t(config->i_session)) == NULL ||
-      (config->j_server_config = i_get_server_configuration(config->i_session)) == NULL ||
-      (config->j_server_jwks = i_get_server_jwks(config->i_session)) == NULL) {
+  if ((config->j_server_config = i_get_server_configuration(&i_session)) == NULL ||
+      (config->j_server_jwks = i_get_server_jwks(&i_session)) == NULL) {
     fprintf(stderr, "Error exporting session\n");
     exit_server(&config, ESRAS_ERROR);
   }
-  if (i_set_parameter_list(config->i_session, I_OPT_CLIENT_ID, config->client_id,
-                                              I_OPT_REDIRECT_URI, config->client_redirect_uri,
-                                              I_OPT_CLIENT_SECRET, config->client_secret,
-                                              I_OPT_AUTH_METHOD, config->client_auth_method,
-                                              I_OPT_TOKEN_METHOD, config->client_token_auth_method,
-                                              I_OPT_CLIENT_SIGN_ALG, config->client_sign_alg,
-                                              I_OPT_SCOPE, config->oidc_scope,
-                                              I_OPT_SCOPE_APPEND, "openid",
-                                              I_OPT_SAVE_HTTP_REQUEST_RESPONSE, 1,
-                                              I_OPT_OPENID_CONFIG_STRICT, 0,
-                                              I_OPT_NONE) != I_OK) {
-    fprintf(stderr, "Error initializing i_session client parameters list\n");
-    exit_server(&config, ESRAS_ERROR);
-  } else {
-    y_log_message(Y_LOG_LEVEL_INFO, "Setting client parameters");
-  }
+  i_clean_session(&i_session);
 
   ulfius_init_instance(config->instance, config->port, NULL, NULL);
-
-  pthread_mutexattr_init ( &mutexattr );
-  pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
-  if (pthread_mutex_init(&config->i_session_lock, &mutexattr) != 0) {
-    fprintf(stderr, "Error initializing insert mutex\n");
-    exit_server(&config, ESRAS_ERROR);
-  }
-  pthread_mutexattr_destroy(&mutexattr);
 
   // Everything is under the protection of the session
   ulfius_add_endpoint_by_val(config->instance, "*", NULL, "*", ESRAS_CALLBACK_PRIORITY_AUTHENTICATION, &callback_esras_check_session, config);
@@ -299,17 +271,12 @@ void exit_server(struct config_elements ** config, int exit_value) {
     h_clean_connection((*config)->conn);
     ulfius_stop_framework((*config)->instance);
     ulfius_clean_instance((*config)->instance);
-    i_clean_session((*config)->i_session);
-    json_decref((*config)->j_session_for_test);
     json_decref((*config)->j_server_config);
     json_decref((*config)->j_server_jwks);
     o_free((*config)->test_client_redirect_uri);
     o_free((*config)->test_callback_page);
-    o_free((*config)->i_session);
     o_free((*config)->register_scope);
-    o_free((*config)->register_access_token);
     o_free((*config)->instance);
-    pthread_mutex_destroy(&(*config)->i_session_lock);
 
     o_free(*config);
     (*config) = NULL;
@@ -323,7 +290,7 @@ void exit_server(struct config_elements ** config, int exit_value) {
  */
 int build_config_from_args(int argc, char ** argv, struct config_elements * config) {
   int next_option;
-  const char * short_options = "c:p:u:m:l:f:h::v::";
+  const char * short_options = "c:p:m:l:f:h::v::";
   char * tmp = NULL, * to_free = NULL, * one_log_mode = NULL;
   static const struct option long_options[]= {
     {"config-file", optional_argument, NULL, 'c'},
@@ -1045,5 +1012,40 @@ char * rand_string_from_charset(char * str, size_t str_size, const char * charse
     return str;
   } else {
     return NULL;
+  }
+}
+
+int i_session_setup_connection(struct config_elements * config, struct _i_session * i_session) {
+  if (i_set_server_configuration(i_session, config->j_server_config) == I_OK &&
+      i_set_server_jwks(i_session, config->j_server_jwks) == I_OK &&
+      i_set_parameter_list(i_session, I_OPT_CLIENT_ID, config->client_id,
+                                      I_OPT_REDIRECT_URI, config->client_redirect_uri,
+                                      I_OPT_CLIENT_SECRET, config->client_secret,
+                                      I_OPT_AUTH_METHOD, config->client_auth_method,
+                                      I_OPT_TOKEN_METHOD, config->client_token_auth_method,
+                                      I_OPT_SCOPE, config->oidc_scope,
+                                      I_OPT_SCOPE_APPEND, "openid",
+                                      I_OPT_NONE) == I_OK) {
+    return E_OK;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "i_session_setup_connection - Error initializing i_session");
+    return E_ERROR;
+  }
+}
+
+int i_session_setup_registration(struct config_elements * config, struct _i_session * i_session) {
+  if (i_set_server_configuration(i_session, config->j_server_config) == I_OK &&
+      i_set_server_jwks(i_session, config->j_server_jwks) == I_OK &&
+      i_set_parameter_list(i_session, I_OPT_RESPONSE_TYPE, I_RESPONSE_TYPE_CLIENT_CREDENTIALS,
+                                      I_OPT_CLIENT_ID, config->client_id,
+                                      I_OPT_CLIENT_SECRET, config->client_secret,
+                                      I_OPT_AUTH_METHOD, config->client_auth_method,
+                                      I_OPT_TOKEN_METHOD, config->client_token_auth_method,
+                                      I_OPT_SCOPE, config->register_scope,
+                                      I_OPT_NONE) == I_OK) {
+    return E_OK;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "i_session_setup_connection - Error initializing i_session");
+    return E_ERROR;
   }
 }
