@@ -14,6 +14,7 @@ class TopMenu extends Component {
     };
     
     this.navigateTo = this.navigateTo.bind(this);
+    this.showHelp = this.showHelp.bind(this);
   }
   
   static getDerivedStateFromProps(props, state) {
@@ -24,6 +25,11 @@ class TopMenu extends Component {
     e.preventDefault();
     routage.addRoute("esras/"+menu||"esras/");
     messageDispatcher.sendMessage("App", {action: 'nav', target: menu});
+  }
+  
+  showHelp(e) {
+    e.preventDefault();
+    messageDispatcher.sendMessage("App", {action: 'help'});
   }
   
   logOut() {
@@ -49,6 +55,18 @@ class TopMenu extends Component {
              onClick={(e) => this.navigateTo(e, 'list')}>
             Esras
           </a>
+          <a href="#" onClick={(e) => this.showHelp(e)}>
+            <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+          </a>
+          <button className="navbar-toggler"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#navbarNav"
+                  aria-controls="navbarNav"
+                  aria-expanded="false"
+                  aria-label="Toggle navigation">
+            <span className="navbar-toggler-icon"></span>
+          </button>
           <div className="collapse navbar-collapse" id="navbarNav">
             <ul className="navbar-nav ms-auto flex-nowrap text-right">
               <li className="nav-item">

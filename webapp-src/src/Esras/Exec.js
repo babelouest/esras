@@ -92,6 +92,7 @@ class Exec extends Component {
         apiManager.request("exec/session/" + this.state.client.client_id, "PUT", this.state.session)
         .then((res) => {
           this.generateParam('state');
+          this.generateParam('nonce');
         })
         .fail((err) => {
           messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_session_error")});
@@ -237,19 +238,25 @@ class Exec extends Component {
   }
   
   runAuth() {
-    this.saveSession(false)
-    .then(() => {
-      return apiManager.request("exec/auth/" + this.state.client.client_id)
-      .then((res) => {
-        this.getSession()
-        .then(() => {
-          this.showHelp(false, 'exec/auth', res);
+    let session = this.state.session;
+    if (!(session.response_type & (constant.responseType.code|constant.responseType.token|constant.responseType.id_token))) {
+      session.response_type = constant.responseType.code;
+    }
+    this.setState({session: session}, () => {
+      this.saveSession(false)
+      .then(() => {
+        return apiManager.request("exec/auth/" + this.state.client.client_id)
+        .then((res) => {
+          this.getSession()
+          .then(() => {
+            this.showHelp(false, 'exec/auth', res);
+          });
+        })
+        .fail((err) => {
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_auth_error")});
+          this.showHelp(false, 'exec/token', err.responseJSON);
+          this.getSession();
         });
-      })
-      .fail((err) => {
-        messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_auth_error")});
-        this.showHelp(false, 'exec/token', err.responseJSON);
-        this.getSession();
       });
     });
   }

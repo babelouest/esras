@@ -27,7 +27,7 @@ class Message extends Component {
 	render() {
 		return (
       <div className="modal" id="messageModal" tabIndex="-1">
-        <div className="modal-dialog modal-lg">
+        <div className="modal-dialog modal-md">
           <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">{this.state.title}</h5>

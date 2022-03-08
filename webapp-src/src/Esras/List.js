@@ -29,7 +29,7 @@ class Register extends Component {
     this.registerNew = this.registerNew.bind(this);
     this.toggleShowSecret = this.toggleShowSecret.bind(this);
     this.showRegistration = this.showRegistration.bind(this);
-    this.closeRegistration = this.closeRegistration.bind(this);
+    this.closeModal = this.closeModal.bind(this);
     this.runClient = this.runClient.bind(this);
     this.editClient = this.editClient.bind(this);
     this.disableClient = this.disableClient.bind(this);
@@ -65,7 +65,7 @@ class Register extends Component {
     });
   }
   
-  closeRegistration() {
+  closeModal() {
     var myModalEl = document.getElementById('messageModal');
     var modal = bootstrap.Modal.getInstance(myModalEl);
     modal.hide();
@@ -154,7 +154,7 @@ class Register extends Component {
           confirmJsx = <Confirm title={i18next.t("client_list_disable_client")} message={i18next.t("client_list_disable_client_message", {name: this.state.curClient.name, client_id: this.state.curClient.client_id})} cb={this.confirmDisableClient} />
         }
         if (this.state.showMessage) {
-          messageJsx = <Message title={this.state.message.title} message={this.state.message.message} cb={this.closeRegistration} />
+          messageJsx = <Message title={this.state.message.title} message={this.state.message.message} cb={this.closeModal} />
         }
         if (client.client_secret) {
           if (this.state.clientShowSecret[client.client_id]) {

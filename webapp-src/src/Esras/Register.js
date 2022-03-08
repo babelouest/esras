@@ -137,7 +137,11 @@ class Register extends Component {
   
   changeTokenSigningAlg(e) {
     let client = this.state.client;
-    client.token_endpoint_signing_alg = e.target.value;
+    if (e.target.value) {
+      client.token_endpoint_signing_alg = e.target.value;
+    } else {
+      delete(client.token_endpoint_signing_alg);
+    }
     this.setState({client: client});
   }
 

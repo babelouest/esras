@@ -11,6 +11,7 @@ import TopMenu from './TopMenu';
 import List from './List';
 import Register from './Register';
 import Exec from './Exec';
+import Message from './Message';
 
 class App extends Component {
   constructor(props) {
@@ -27,11 +28,20 @@ class App extends Component {
         token_endpoint_auth_method: 'client_secret_basic',
         grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization'],
         response_types: ['code', 'token', 'id_token'],
-        jwks: "",
-        token_endpoint_signing_alg: ""
+        jwks: ""
       },
       nav: false,
-      runMenu: false
+      runMenu: false,
+      showMessage: false,
+      message: {
+        title: i18next.t("help_esras_title"),
+        message: <div>
+          <p>{i18next.t("help_esras")}</p>
+          <a href="https://github.com/babelouest/esras/issues">https://github.com/babelouest/esras/issues</a>
+          <hr/>
+          <p>Copyright 2022 - Nicolas Mora <a href="mailto:mail@babelouest.io">mail@babelouest.io</a></p>
+        </div>
+      }
     };
 
     apiManager.setConfig("api");
@@ -53,8 +63,7 @@ class App extends Component {
             token_endpoint_auth_method: 'client_secret_basic',
             grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization'],
             response_types: ['code', 'token', 'id_token'],
-            jwks: "",
-            token_endpoint_signing_alg: ""
+            jwks: ""
           }});
         } else if (message.target === 'edit') {
           this.setState({nav: 'register', curClient: message.client.registration});
@@ -66,6 +75,8 @@ class App extends Component {
         .then(() => {
           this.setState({profile: false, clients: [], nav: false});
         });
+      } else if (message.action === 'help') {
+        this.showHelp();
       }
     });
 
@@ -85,6 +96,8 @@ class App extends Component {
     });
     
     this.gotoRoute = this.gotoRoute.bind(this);
+    this.showHelp = this.showHelp.bind(this);
+    this.closeModal = this.closeModal.bind(this);
   }
   
   getProfile() {
@@ -133,8 +146,24 @@ class App extends Component {
     }
   }
 
+  showHelp() {
+    this.setState({showMessage: true}, () => {
+      var myModal = new bootstrap.Modal(document.getElementById('messageModal'), {
+        keyboard: true
+      });
+      myModal.show();
+    });
+  }
+
+  closeModal() {
+    var myModalEl = document.getElementById('messageModal');
+    var modal = bootstrap.Modal.getInstance(myModalEl);
+    modal.hide();
+    this.setState({showMessage: false});
+  }
+
 	render() {
-    var body;
+    var body, messageJsx;
     if (this.state.nav === 'register') {
       body = <Register client={this.state.curClient} />
     } else if (this.state.nav === 'exec') {
@@ -142,11 +171,15 @@ class App extends Component {
     } else {
       body = <List clients={this.state.clients} />
     }
+    if (this.state.showMessage) {
+      messageJsx = <Message title={this.state.message.title} message={this.state.message.message} cb={this.closeModal} />
+    }
     return (
       <div className="container-fluid">
         <TopMenu profile={this.state.profile}/>
         {body}
         <Notification/>
+        {messageJsx}
       </div>
     );
 	}
