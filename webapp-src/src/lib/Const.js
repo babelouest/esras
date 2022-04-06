@@ -37,6 +37,12 @@ class Const {
       JwtEncryptSecret: 0x00100000,
       JwtEncryptPubkey: 0x01000000
     }
+    
+    this.cibaLoginHintMethod = {
+      JSON:             0,
+      JWT:              1,
+      id_token:         2
+    };
   }
 }
 

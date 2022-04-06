@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 
 import i18next from 'i18next';
+import qrcode from 'qrcode-generator';
 
 import messageDispatcher from '../lib/MessageDispatcher';
 import apiManager from '../lib/APIManager';
@@ -23,6 +24,21 @@ function getQueryParams(qs) {
   return params;
 }
 
+let defaultSession = {
+  response_type: constant.responseType.code,
+  scope: "openid",
+  state: "",
+  nonce: "",
+  auth_method: constant.authMethod.Get,
+  token_method: constant.tokenMethod.SecretBasic,
+  client_jwks: {keys: []},
+  client_sign_alg: "",
+  token_exp: 60,
+  ciba_client_notification_token: "",
+  ciba_login_hint_format: constant.cibaLoginHintMethod.JSON,
+  ciba_login_hint: JSON.stringify({sub: ""})
+};
+
 class Exec extends Component {
   constructor(props) {
     super(props);
@@ -31,16 +47,8 @@ class Exec extends Component {
       client: props.client,
       oidcConfig: props.oidcConfig,
       menu: props.menu||"auth",
-      session: {
-        response_type: constant.responseType.code,
-        scope: "openid",
-        state: "",
-        nonce: "",
-        auth_method: constant.authMethod.Get,
-        token_method: constant.tokenMethod.SecretBasic,
-        client_jwks: {keys: []},
-        client_sign_alg: ""
-      },
+      profile: props.profile,
+      session: defaultSession,
       showMessage: false,
       message: {
         title: false,
@@ -54,11 +62,16 @@ class Exec extends Component {
       clientKid: [],
       userinfoGetJwt: false,
       token_target: "access_token",
-      introspection: {}
+      introspection: {},
+      use_dpop: false,
+      ciba_login_hint: props.profile.sub||"",
+      ciba_login_hint_identifier: "sub"
     };
+    this.state.session.ciba_login_hint = JSON.stringify({sub: props.profile.sub||""});
     
     this.getSession = this.getSession.bind(this);
     this.saveSession = this.saveSession.bind(this);
+    this.resetSession = this.resetSession.bind(this);
     this.changeScope = this.changeScope.bind(this);
     this.selectScope = this.selectScope.bind(this);
     this.changeParam = this.changeParam.bind(this);
@@ -76,6 +89,17 @@ class Exec extends Component {
     this.changeUserinfoGetJwt = this.changeUserinfoGetJwt.bind(this);
     this.selectTokenTarget = this.selectTokenTarget.bind(this);
     this.selectPkceMethod = this.selectPkceMethod.bind(this);
+    this.changeUseDpop = this.changeUseDpop.bind(this);
+    this.selectDpopKid = this.selectDpopKid.bind(this);
+    this.runDeviceAuth = this.runDeviceAuth.bind(this);
+    this.runDeviceVerification = this.runDeviceVerification.bind(this);
+    this.runCibaAuth = this.runCibaAuth.bind(this);
+    this.runCibaVerification = this.runCibaVerification.bind(this);
+    this.getCibaNotification = this.getCibaNotification.bind(this);
+    this.selectCibaLoginHintFormat = this.selectCibaLoginHintFormat.bind(this);
+    this.changeCibaLoginHint = this.changeCibaLoginHint.bind(this);
+    this.changeCibaLoginHintIdentifier = this.changeCibaLoginHintIdentifier.bind(this);
+    this.setCibaLoginHintSession = this.setCibaLoginHintSession.bind(this);
     
     this.getSession();
   }
@@ -91,8 +115,10 @@ class Exec extends Component {
       if (err.status === 404) {
         apiManager.request("exec/session/" + this.state.client.client_id, "PUT", this.state.session)
         .then((res) => {
-          this.generateParam('state');
-          this.generateParam('nonce');
+          this.generateParam('state')
+          .then(() => {
+            this.generateParam('nonce');
+          });
         })
         .fail((err) => {
           messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_session_error")});
@@ -122,6 +148,27 @@ class Exec extends Component {
         messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_session_error")});
       });
     }
+  }
+  
+  resetSession(e) {
+    e.preventDefault();
+    return apiManager.request("exec/session/" + this.state.client.client_id, "DELETE")
+    .then((res) => {
+      let newSession = defaultSession;
+      let result = this.parseClientJwks(this.state.client_jwks);
+      if (result.client_jwks) {
+        newSession.client_jwks = result.client_jwks;
+      }
+      if (result.client_kid) {
+        newSession.client_kid = result.client_kid;
+      }
+      this.setState({jwksValid: result.jwksValid, introspection: {}, session: newSession}, () => {
+        this.getSession();
+      });
+    })
+    .fail((err) => {
+      messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_session_error")});
+    });
   }
   
   changeScope(e) {
@@ -199,10 +246,10 @@ class Exec extends Component {
     });
   }
 
-  changeClientJwks(e) {
-    let jwksValid = true, parsedJwks = false, session = this.state.session;
+  parseClientJwks(client_jwks) {
+    let jwksValid = true, parsedJwks = false, result = {};
     try {
-      parsedJwks = JSON.parse(e.target.value);
+      parsedJwks = JSON.parse(client_jwks);
     } catch(err) {
       jwksValid = false;
     }
@@ -218,13 +265,25 @@ class Exec extends Component {
         });
       }
     }
+    result.jwksValid = jwksValid;
     if (jwksValid) {
-      session.client_jwks = parsedJwks;
+      result.client_jwks = parsedJwks;
       if (parsedJwks.keys[0] && parsedJwks.keys[0].kid) {
-        session.client_kid = parsedJwks.keys[0].kid;
+        result.client_kid = parsedJwks.keys[0].kid;
       };
     }
-    this.setState({jwksValid: jwksValid, client_jwks: e.target.value, session: session}, () => {
+    return result;
+  }
+  
+  changeClientJwks(e) {
+    let result = this.parseClientJwks(e.target.value), session = this.state.session;
+    if (result.jwksValid) {
+      session.client_jwks = result.client_jwks;
+      if (session.client_jwks.keys[0] && session.client_jwks.keys[0].kid) {
+        session.client_kid = result.client_kid;
+      };
+    }
+    this.setState({jwksValid: result.jwksValid, client_jwks: e.target.value, session: session}, () => {
       this.saveSession(true);
     });
   }
@@ -232,6 +291,22 @@ class Exec extends Component {
   selectClientKid(e) {
     let session = this.state.session;
     session.client_kid = e.target.value;
+    this.setState({session: session}, () => {
+      this.saveSession(false);
+    });
+  }
+  
+  changeUseDpop() {
+    let session = this.state.session;
+    session.use_dpop = !session.use_dpop;
+    this.setState({session: session}, () => {
+      this.saveSession(false);
+    });
+  }
+  
+  selectDpopKid(e) {
+    let session = this.state.session;
+    session.dpop_kid = e.target.value;
     this.setState({session: session}, () => {
       this.saveSession(false);
     });
@@ -260,6 +335,30 @@ class Exec extends Component {
       });
     });
   }
+  
+  runPar() {
+    let session = this.state.session;
+    if (!(session.response_type & (constant.responseType.code|constant.responseType.token|constant.responseType.id_token))) {
+      session.response_type = constant.responseType.code;
+    }
+    this.setState({session: session}, () => {
+      this.saveSession(false)
+      .then(() => {
+        return apiManager.request("exec/par/" + this.state.client.client_id)
+        .then((res) => {
+          this.getSession()
+          .then(() => {
+            this.showHelp(false, 'exec/par', res);
+          });
+        })
+        .fail((err) => {
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_par_error")});
+          this.showHelp(false, 'exec/token', err.responseJSON);
+          this.getSession();
+        });
+      });
+    });
+  }
 
   runToken() {
     this.saveSession(false)
@@ -281,7 +380,9 @@ class Exec extends Component {
   }
 
   changeUserinfoGetJwt() {
-    this.setState({userinfoGetJwt: !this.state.userinfoGetJwt});
+    this.setState({userinfoGetJwt: !this.state.userinfoGetJwt}, () => {
+      this.saveSession(false);
+    });
   }
   
   runUserinfo() {
@@ -375,6 +476,134 @@ class Exec extends Component {
     });
   }
 
+  runDeviceAuth() {
+    this.saveSession(false)
+    .then(() => {
+      return apiManager.request("exec/device/" + this.state.client.client_id, "POST")
+      .then((res) => {
+        this.getSession()
+        .then(() => {
+          this.showHelp(false, 'exec/device', res);
+        });
+      })
+      .fail((err) => {
+        messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_device_auth_error")});
+        this.showHelp(false, 'exec/device', err.responseJSON);
+        this.getSession();
+      });
+    });
+  }
+  
+  runDeviceVerification() {
+    let session = this.state.session;
+    session.response_type = constant.grantType.device_code;
+    this.setState({session: session}, () => {
+      this.saveSession(false)
+      .then(() => {
+        return apiManager.request("exec/token/" + this.state.client.client_id, "POST")
+        .then((res) => {
+          this.getSession()
+          .then(() => {
+            this.showHelp(false, 'exec/token', res);
+            routage.addRoute("esras/run/" + this.state.client.client_id + "/tokenResult");
+          });
+        })
+        .fail((err) => {
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_token_error")});
+          this.showHelp(false, 'exec/token', err.responseJSON);
+          this.getSession();
+        });
+      });
+    });
+  }
+
+  runCibaAuth() {
+    this.saveSession(false)
+    .then(() => {
+      return apiManager.request("exec/ciba/" + this.state.client.client_id, "POST")
+      .then((res) => {
+        this.getSession()
+        .then(() => {
+          this.showHelp(false, 'exec/ciba', res);
+        });
+      })
+      .fail((err) => {
+        messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_ciba_auth_error")});
+        this.showHelp(false, 'exec/ciba', err.responseJSON);
+        this.getSession();
+      });
+    });
+  }
+
+  runCibaVerification() {
+    let session = this.state.session;
+    session.response_type = constant.grantType.ciba;
+    this.setState({session: session}, () => {
+      this.saveSession(false)
+      .then(() => {
+        return apiManager.request("exec/token/" + this.state.client.client_id, "POST")
+        .then((res) => {
+          this.getSession()
+          .then(() => {
+            this.showHelp(false, 'exec/token', res);
+            routage.addRoute("esras/run/" + this.state.client.client_id + "/tokenResult");
+          });
+        })
+        .fail((err) => {
+          messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_run_token_error")});
+          this.showHelp(false, 'exec/token', err.responseJSON);
+          this.getSession();
+        });
+      });
+    });
+  }
+  
+  getCibaNotification() {
+    return apiManager.request("notification/ciba/" + this.state.client.client_id)
+    .then((res) => {
+      this.getSession()
+      .then(() => {
+        this.showHelp(false, 'notification/ciba', res);
+        routage.addRoute("esras/run/" + this.state.client.client_id + "/tokenResult");
+      });
+    })
+  }
+
+  selectCibaLoginHintFormat(e) {
+    let session = this.state.session;
+    session.ciba_login_hint_format = parseInt(e.target.value);
+    this.setState({session: session}, () => {
+      this.setCibaLoginHintSession();
+    });
+  }
+  
+  changeCibaLoginHint(e) {
+    this.setState({ciba_login_hint: e.target.value}, () => {
+      this.setCibaLoginHintSession();
+    });
+  }
+  
+  changeCibaLoginHintIdentifier(e, identifier) {
+    e.preventDefault();
+    this.setState({ciba_login_hint_identifier: identifier}, () => {
+      this.setCibaLoginHintSession();
+    });
+  }
+
+  setCibaLoginHintSession() {
+    let session = this.state.session;
+    if (session.ciba_login_hint_format === constant.cibaLoginHintMethod.id_token) {
+      session.ciba_login_hint = this.state.ciba_login_hint;
+    } else {
+      let loginHint = {};
+      loginHint[this.state.ciba_login_hint_identifier] = this.state.ciba_login_hint;
+      session.ciba_login_hint = JSON.stringify(loginHint);
+    }
+    this.setState({session: session}, () => {
+      this.saveSession(false);
+    });
+  }
+
   showHelp(e, help, result = false) {
     if (e) {
       e.preventDefault();
@@ -415,30 +644,6 @@ class Exec extends Component {
           {errorDescriptionJsx}
           {errorUriJsx}
         </p>
-    } else if (help === 'client_id') {
-      messageJsx.message = <p>{i18next.t("help_client_id")}</p>
-    } else if (help === 'name') {
-      messageJsx.message = <p>{i18next.t("help_name")}</p>
-    } else if (help === 'client_secret') {
-      messageJsx.message = <p>{i18next.t("help_client_secret")}</p>
-    } else if (help === 'redirect_uris') {
-      messageJsx.message = <p>{i18next.t("help_redirect_uris_exec")}</p>
-    } else if (help === 'response_type') {
-      messageJsx.message = <p>{i18next.t("help_response_type")}</p>
-    } else if (help === 'auth_method') {
-      messageJsx.message = <p>{i18next.t("help_auth_method")}</p>
-    } else if (help === 'auth_method_parameters') {
-      messageJsx.message = <p>{i18next.t("help_auth_method_parameters")}</p>
-    } else if (help === 'scope') {
-      messageJsx.message = <p>{i18next.t("help_scope")}</p>
-    } else if (help === 'state') {
-      messageJsx.message = <p>{i18next.t("help_state")}</p>
-    } else if (help === 'nonce') {
-      messageJsx.message = <p>{i18next.t("help_nonce")}</p>
-    } else if (help === 'code') {
-      messageJsx.message = <p>{i18next.t("help_code")}</p>
-    } else if (help === 'access_token') {
-      messageJsx.message = <p>{i18next.t("help_access_token")}</p>
     } else if (help === 'access_token_show') {
       messageJsx.message =
       <div>
@@ -447,10 +652,6 @@ class Exec extends Component {
           {JSON.stringify(this.state.session.access_token_payload, null, 2)}
         </pre>
       </div>
-    } else if (help === 'refresh_token') {
-      messageJsx.message = <p>{i18next.t("help_refresh_token")}</p>
-    } else if (help === 'id_token') {
-      messageJsx.message = <p>{i18next.t("help_id_token")}</p>
     } else if (help === 'id_token_show') {
       messageJsx.message =
       <div>
@@ -577,6 +778,20 @@ class Exec extends Component {
                 </span>
               </p>
             );
+          } else if (param === 'dpop_jkt') {
+            authParamsJsx.push(
+              <p key={param}>
+                <code>
+                  <span className="text-primary elt-left">
+                    {param} = {authParams[param]}
+                  </span>
+                </code>
+                :
+                <span className="elt-right">
+                  {i18next.t("help_dpop_jkt")}
+                </span>
+              </p>
+            );
           }
         });
         messageJsx.message =
@@ -619,6 +834,9 @@ class Exec extends Component {
           <div>
             <p className="alert alert-secondary">{i18next.t("help_exec_auth")}</p>
             <code><a href={result.url} className="text-success">{result.url}</a></code>
+            <hr/>
+            <p className="alert alert-secondary">{i18next.t("help_exec_auth_params")}</p>
+            {authParamsJsx}
             <hr/>
             <p className="alert alert-secondary">{i18next.t("help_exec_request")}</p>
             <pre>{requestFormatted.join("\n")}</pre>
@@ -785,6 +1003,350 @@ class Exec extends Component {
           <p className="alert alert-secondary">{i18next.t("help_exec_response")}</p>
           <pre>{responseFormatted.join("\n")}</pre>
         </div>
+    } else if (help === 'exec/par') {
+      let requestSplitted = result.request.split("\r\n"), requestFormatted = [], responseSplitted = result.response.split("\r\n"), responseFormatted = [];
+      requestSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              requestFormatted.push(line.substr(i, 80));
+            } else {
+              requestFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          requestFormatted.push(line);
+        }
+      });
+      responseSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              responseFormatted.push(line.substr(i, 80));
+            } else {
+              responseFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          responseFormatted.push(line);
+        }
+      });
+      messageJsx.message =
+        <div>
+          <p className="alert alert-secondary">{i18next.t("help_exec_auth")}</p>
+          <code><a href={result.url} className="text-success">{result.url}</a></code>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_par_params")}</p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  request_uri : {result.request_uri}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_par_request_uri")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  expires_in : {result.expires_in}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_par_expires_in")}
+              </span>
+            </p>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_request")}</p>
+          <pre>{requestFormatted.join("\n")}</pre>
+          <p className="alert alert-secondary">{i18next.t("help_exec_response")}</p>
+          <pre>{responseFormatted.join("\n")}</pre>
+        </div>
+    } else if (help === 'exec/device') {
+      let requestSplitted = result.request.split("\r\n"), requestFormatted = [], responseSplitted = result.response.split("\r\n"), responseFormatted = [];
+      requestSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              requestFormatted.push(line.substr(i, 80));
+            } else {
+              requestFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          requestFormatted.push(line);
+        }
+      });
+      responseSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              responseFormatted.push(line.substr(i, 80));
+            } else {
+              responseFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          responseFormatted.push(line);
+        }
+      });
+      messageJsx.message =
+        <div>
+          <p className="alert alert-secondary">{i18next.t("help_exec_device_auth")}</p>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_device_auth_params")}</p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  code : {result.code}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_code")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  user_code : {result.user_code}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_user_code")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  verification_uri : {result.verification_uri}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_verification_uri")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  verification_uri_complete : {result.verification_uri_complete}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_verification_uri_complete")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  expires_in : {result.expires_in}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_expires_in")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  interval : {result.interval}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_device_auth_interval")}
+              </span>
+            </p>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_request")}</p>
+          <pre>{requestFormatted.join("\n")}</pre>
+          <p className="alert alert-secondary">{i18next.t("help_exec_response")}</p>
+          <pre>{responseFormatted.join("\n")}</pre>
+        </div>
+    } else if (help === 'exec/ciba') {
+      let requestSplitted = result.request.split("\r\n"), requestFormatted = [], responseSplitted = result.response.split("\r\n"), responseFormatted = [];
+      requestSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              requestFormatted.push(line.substr(i, 80));
+            } else {
+              requestFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          requestFormatted.push(line);
+        }
+      });
+      responseSplitted.forEach(line => {
+        if (line.length > 80) {
+          for (var i = 0; i < line.length; i += (i?79:80)) {
+            if (!i) {
+              responseFormatted.push(line.substr(i, 80));
+            } else {
+              responseFormatted.push(" " + line.substr(i, 79));
+            }
+          }
+        } else {
+          responseFormatted.push(line);
+        }
+      });
+      messageJsx.message =
+        <div>
+          <p className="alert alert-secondary">{i18next.t("help_exec_ciba_auth")}</p>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_ciba_auth_params")}</p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  code : {result.auth_req_id}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_ciba_auth_req_id")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  expires_in : {result.expires_in}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_ciba_expires_in")}
+              </span>
+            </p>
+            <p>
+              <code>
+                <span className="text-primary elt-left">
+                  interval : {result.interval}
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_ciba_interval")}
+              </span>
+            </p>
+          <hr/>
+          <p className="alert alert-secondary">{i18next.t("help_exec_request")}</p>
+          <pre>{requestFormatted.join("\n")}</pre>
+          <p className="alert alert-secondary">{i18next.t("help_exec_response")}</p>
+          <pre>{responseFormatted.join("\n")}</pre>
+        </div>
+    } else if (help === 'notification/ciba') {
+      if (result.request) {
+        let requestSplitted = result.request.split("\r\n"), requestFormatted = [], body = requestSplitted[requestSplitted.length-2], paramsJsx = [];
+        requestSplitted.forEach(line => {
+          if (line.length > 80) {
+            for (var i = 0; i < line.length; i += (i?79:80)) {
+              if (!i) {
+                requestFormatted.push(line.substr(i, 80));
+              } else {
+                requestFormatted.push(" " + line.substr(i, 79));
+              }
+            }
+          } else {
+            requestFormatted.push(line);
+          }
+        });
+        try {
+          let bodyJson = JSON.parse(body);
+          paramsJsx.push(
+          <p key={0}>
+            <code>
+              <span className="text-primary elt-left">
+                auth_req_id : {bodyJson.auth_req_id}
+              </span>
+            </code>
+            -
+            <span className="elt-right">
+              {i18next.t("help_ciba_auth_req_id")}
+            </span>
+          </p>);
+          if (bodyJson.access_token) {
+            paramsJsx.push(
+            <p key={1}>
+              <code>
+                <span className="text-primary elt-left">
+                  access_token : {bodyJson.access_token.substring(0, 10)}[...]
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_access_token")}
+              </span>
+            </p>
+            );
+          }
+          if (bodyJson.refresh_token) {
+            paramsJsx.push(
+            <p key={2}>
+              <code>
+                <span className="text-primary elt-left">
+                  refresh_token : {bodyJson.refresh_token.substring(0, 10)}[...]
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_refresh_token")}
+              </span>
+            </p>
+            );
+          }
+          if (bodyJson.id_token) {
+            paramsJsx.push(
+            <p key={3}>
+              <code>
+                <span className="text-primary elt-left">
+                  id_token : {bodyJson.id_token.substring(0, 10)}[...]
+                </span>
+              </code>
+              -
+              <span className="elt-right">
+                {i18next.t("help_id_token")}
+              </span>
+            </p>
+            );
+          }
+          if (paramsJsx.length == 1) {
+            paramsJsx.push(
+            <p key={1}>
+              <span className="elt-right">
+                {i18next.t("help_ciba_ping_notification")}
+              </span>
+            </p>
+            );
+          }
+        } catch (err) {
+        }
+        messageJsx.message =
+          <div>
+            <p className="alert alert-secondary">{i18next.t("help_exec_ciba_notification")}</p>
+            <hr/>
+            <p className="alert alert-secondary">{i18next.t("help_exec_ciba_notification_params")}</p>
+            {paramsJsx}
+            <hr/>
+            <p className="alert alert-secondary">{i18next.t("help_exec_request_received")}</p>
+            <pre>{requestFormatted.join("\n")}</pre>
+          </div>
+      } else {
+        messageJsx.message =
+          <div>
+            <p className="alert alert-secondary">{i18next.t("help_exec_ciba_notification")}</p>
+            <hr/>
+            <p className="alert alert-secondary">{i18next.t("help_exec_ciba_notification_empty")}</p>
+            <hr/>
+          </div>
+      }
     } else if (help === 'client_jwks') {
       messageJsx.message = 
       <div>
@@ -792,22 +1354,36 @@ class Exec extends Component {
         <h4>{i18next.t("help_client_jwks_warning")}</h4>
         <p>{i18next.t("help_client_jwks_warning_message")}</p>
       </div>
-    } else if (help === 'token_method') {
-      messageJsx.message = <p>{i18next.t("help_token_method")}</p>
-    } else if (help === 'grant_type') {
-      messageJsx.message = <p>{i18next.t("help_grant_type")}</p>
-    } else if (help === 'userinfo') {
-      messageJsx.message = <p>{i18next.t("help_userinfo")}</p>
-    } else if (help === 'userinfo_get_jwt') {
-      messageJsx.message = <p>{i18next.t("help_userinfo_get_jwt")}</p>
-    } else if (help === 'introspection') {
-      messageJsx.message = <p>{i18next.t("help_introspection")}</p>
-    } else if (help === 'introspection_get_jwt') {
-      messageJsx.message = <p>{i18next.t("help_introspection_get_jwt")}</p>
-    } else if (help === 'revocation') {
-      messageJsx.message = <p>{i18next.t("help_revocation")}</p>
-    } else if (help === 'token_target') {
-      messageJsx.message = <p>{i18next.t("help_token_target")}</p>
+    } else if (help === 'device_auth_verification_uri/qr-code') {
+      var qr = qrcode(0, 'L');
+      qr.addData(this.state.session.device_auth_verification_uri);
+      qr.make();
+      messageJsx.message = 
+      <div>
+        <p>{i18next.t("help_device_auth_verification_uri")}</p>
+        <hr/>
+        <p>{i18next.t("help_device_qr_code")}</p>
+          <a href={this.state.session.device_auth_verification_uri} title={this.state.session.device_auth_verification_uri}>
+            <div dangerouslySetInnerHTML={{__html: qr.createSvgTag(4)}} />
+            {this.state.session.device_auth_verification_uri}
+          </a>
+      </div>
+    } else if (help === 'device_auth_verification_uri_complete/qr-code') {
+      var qr = qrcode(0, 'L');
+      qr.addData(this.state.session.device_auth_verification_uri_complete);
+      qr.make();
+      messageJsx.message = 
+      <div>
+        <p>{i18next.t("help_device_auth_verification_uri_complete")}</p>
+        <hr/>
+        <p>{i18next.t("help_device_qr_code")}</p>
+          <a href={this.state.session.device_auth_verification_uri_complete} title={this.state.session.device_auth_verification_uri_complete}>
+            <div dangerouslySetInnerHTML={{__html: qr.createSvgTag(4)}} />
+            {this.state.session.device_auth_verification_uri_complete}
+          </a>
+      </div>
+    } else {
+      messageJsx.message = <p>{i18next.t("help_"+help)}</p>
     }
     this.setState({showMessage: true, message: messageJsx}, () => {
       var myModal = new bootstrap.Modal(document.getElementById('messageModal'), {
@@ -842,7 +1418,9 @@ class Exec extends Component {
         showToken = "", highlightToken = " collapsed",
         showTokenResults = "", highlightTokenResults = " collapsed",
         showUserinfo = "", highlightUserinfo = " collapsed",
-        showTokenIntrospection = "", highlightTokenIntrospection = " collapsed";
+        showTokenIntrospection = "", highlightTokenIntrospection = " collapsed",
+        showDevice = "", highlightDevice = " collapsed",
+        showCiba = "", highlightCiba = " collapsed";
     if (this.state.menu === "credentals") {
       showCredentials = " show";
       highlightCredentials = "";
@@ -855,6 +1433,18 @@ class Exec extends Component {
     } else if (this.state.menu === "tokenResult") {
       showTokenResults = " show";
       highlightTokenResults = ""
+    } else if (this.state.menu === "userinfo") {
+      showUserinfo = " show";
+      highlightUserinfo = ""
+    } else if (this.state.menu === "introspect") {
+      showTokenIntrospection = " show";
+      highlightTokenIntrospection = ""
+    } else if (this.state.menu === "device") {
+      showDevice = " show";
+      highlightDevice = ""
+    } else if (this.state.menu === "ciba") {
+      showCiba = " show";
+      highlightCiba = ""
     }
     let errorJsx;
     if (this.state.session.error) {
@@ -884,7 +1474,13 @@ class Exec extends Component {
     return (
       <div>
         <h2>
-          {i18next.t("client_run")}{errorJsx}
+          {i18next.t("client_run")}
+          {errorJsx}
+          <a href="#" onClick={(e) => this.resetSession(e)} className="elt-right" title={i18next.t("reset_session_title")}>
+            <span className="badge rounded-pill bg-info">
+              <i className="fa fa-refresh" aria-hidden="true"></i>
+            </span>
+          </a>
         </h2>
         <div className="accordion" id="accordionExec">
           <div className="accordion-item">
@@ -949,6 +1545,35 @@ class Exec extends Component {
                     </a>
                   </label>
                   <select className="form-select" value={this.state.session['client-kid']} onChange={this.selectClientKid}>
+                    {clientKidListJsx}
+                  </select>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="token_exp" className="form-label">
+                    {i18next.t("client_run_token_exp")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'token_exp')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" disabled={true} value={this.state.session.token_exp} />
+                </div>
+                <div className="mb-3 form-check">
+                  <input type="checkbox" className="form-check-input" id="use_dpop" checked={this.state.session.use_dpop} onChange={this.changeUseDpop} />
+                  <label htmlFor="use_dpop" className="form-label">
+                    {i18next.t("client_run_use_dpop")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'use_dpop')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="dpop_kid" className="form-label">
+                    {i18next.t("client_run_dpop_kid")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'dpop_kid')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <select className="form-select" value={this.state.session.dpop_kid} onChange={this.selectDpopKid}>
                     {clientKidListJsx}
                   </select>
                 </div>
@@ -1075,17 +1700,20 @@ class Exec extends Component {
                   </label>
                   <div className="input-group mb-3">
                     <input type="text" className="form-control" value={this.state.session.pkce_code_verifier||""} onChange={(e) => this.changeParam(e, 'pkce_code_verifier')} disabled={this.state.session.pkce_method!==2} />
-                    <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_save")} onClick={(e) => this.saveSession(false)}>
+                    <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_save")} onClick={(e) => this.saveSession(false)} disabled={this.state.session.pkce_method!==2}>
                       <i className="fa fa-save" aria-hidden="true"></i>
                     </button>
-                    <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_generate")} onClick={() => this.generateParam('pkce')}>
+                    <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_generate")} onClick={() => this.generateParam('pkce')} disabled={this.state.session.pkce_method!==2}>
                       <i className="fa fa-cogs" aria-hidden="true"></i>
                     </button>
                   </div>
                 </div>
                 <div className="mb-3">
-                  <button type="button" onClick={() => this.runAuth()} className="btn btn-primary">
+                  <button type="button" onClick={() => this.runAuth()} className="btn btn-primary elt-left">
                     {i18next.t("client_run_auth_btn")}
+                  </button>
+                  <button type="button" onClick={() => this.runPar()} className="btn btn-primary">
+                    {i18next.t("client_run_par_btn")}
                   </button>
                 </div>
               </div>
@@ -1120,8 +1748,8 @@ class Exec extends Component {
                     {/*<option value={constant.grantType.password}>password</option>*/}
                     <option value={constant.grantType.client_credentials}>client_credentials</option>
                     <option value={constant.grantType.refresh_token}>refresh_token</option>
-                    {/*<option value={constant.grantType.device_code}>device_code</option>
-                    <option value={constant.grantType.ciba}>ciba</option>*/}
+                    <option value={constant.grantType.device_code}>device_code</option>
+                    <option value={constant.grantType.ciba}>ciba</option>
                   </select>
                 </div>
                 <div className="mb-3">
@@ -1167,16 +1795,36 @@ class Exec extends Component {
                       <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
                     </a>
                   </label>
-                  <div className="input-group mb-3">
-                    <textarea className="form-control" value={this.state.session.access_token} disabled={true} rows="6"></textarea>
-                    <button className="btn btn-outline-secondary"
-                            type="button"
-                            title={i18next.t("client_run_show_access_token")}
-                            onClick={(e) => this.showHelp(e, 'access_token_show')}
-                            disabled={!this.state.session.access_token}>
-                      <i className="fa fa-eye" aria-hidden="true"></i>
-                    </button>
-                  </div>
+                  <span className="token">
+                    <code>
+                      {this.state.session.access_token||'-'}
+                    </code>
+                  </span>
+                  <button className="btn btn-outline-secondary"
+                          type="button"
+                          title={i18next.t("client_run_show_access_token")}
+                          onClick={(e) => this.showHelp(e, 'access_token_show')}
+                          disabled={!this.state.session.access_token}>
+                    <i className="fa fa-eye" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="client_id" className="form-label">
+                    {i18next.t("client_run_token_type")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'token_type')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.token_type} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="client_id" className="form-label">
+                    {i18next.t("client_run_expires_in")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'expires_in')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.expires_in} disabled={true} />
                 </div>
                 <div className="mb-3">
                   <label htmlFor="refresh_token" className="form-label">
@@ -1185,7 +1833,11 @@ class Exec extends Component {
                       <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
                     </a>
                   </label>
-                  <textarea className="form-control" value={this.state.session.refresh_token} disabled={true} rows="6"></textarea>
+                  <span className="token">
+                    <code>
+                      {this.state.session.refresh_token||'-'}
+                    </code>
+                  </span>
                 </div>
                 <div className="mb-3">
                   <label htmlFor="id_token" className="form-label">
@@ -1194,12 +1846,14 @@ class Exec extends Component {
                       <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
                     </a>
                   </label>
-                  <div className="input-group mb-3">
-                    <textarea className="form-control" value={this.state.session.id_token} disabled={true} rows="6"></textarea>
-                    <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_show_id_token")} onClick={(e) => this.showHelp(e, 'id_token_show')}>
-                      <i className="fa fa-eye" aria-hidden="true"></i>
-                    </button>
-                  </div>
+                  <span className="token">
+                    <code>
+                      {this.state.session.id_token||'-'}
+                    </code>
+                  </span>
+                  <button className="btn btn-outline-secondary" type="button" title={i18next.t("client_run_show_id_token")} onClick={(e) => this.showHelp(e, 'id_token_show')}>
+                    <i className="fa fa-eye" aria-hidden="true"></i>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1221,7 +1875,7 @@ class Exec extends Component {
                   </a>
                 </div>
                 <div className="mb-3 form-check">
-                  <input type="checkbox" className="form-check-input" id="userinfo_get_jwt" value={this.state.userinfoGetJwt} onChange={this.changeUserinfoGetJwt} />
+                  <input type="checkbox" className="form-check-input" id="userinfo_get_jwt" checked={this.state.userinfoGetJwt} onChange={this.changeUserinfoGetJwt} />
                   <label htmlFor="userinfo_get_jwt" className="form-label">
                     {i18next.t("client_run_userinfo_get_jwt")}
                     <a href="#" onClick={(e) => this.showHelp(e, 'userinfo_get_jwt')}>
@@ -1272,7 +1926,7 @@ class Exec extends Component {
                   </select>
                 </div>
                 <div className="mb-3 form-check">
-                  <input type="checkbox" className="form-check-input" id="introspection_get_jwt" value={this.state.userinfoGetJwt} onChange={this.changeUserinfoGetJwt} />
+                  <input type="checkbox" className="form-check-input" id="introspection_get_jwt" checked={this.state.userinfoGetJwt} onChange={this.changeUserinfoGetJwt} />
                   <label htmlFor="introspection_get_jwt" className="form-label">
                     {i18next.t("client_run_userinfo_get_jwt")}
                     <a href="#" onClick={(e) => this.showHelp(e, 'introspection_get_jwt')}>
@@ -1283,6 +1937,245 @@ class Exec extends Component {
                 <div className="mb-3">
                   <p className="alert alert-secondary">{i18next.t("client_run_introspection_response")}</p>
                   <pre>{JSON.stringify(this.state.introspection, null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="accordion-item">
+            <h2 className="accordion-header" id="headingDevice">
+              <button className={"accordion-button"+highlightDevice} type="button" data-bs-toggle="collapse" data-bs-target="#collapseDevice" aria-expanded="false" aria-controls="collapseDevice">
+                {i18next.t("client_run_device_request")}
+              </button>
+            </h2>
+            <div id="collapseDevice" className={"accordion-collapse collapse"+showDevice} aria-labelledby="headingDevice" data-bs-parent="#accordionExec">
+              <div className="accordion-body">
+                <div className="mb-3">
+                  <button type="button" onClick={() => this.runDeviceAuth()} className="btn btn-primary">
+                    {i18next.t("client_run_device_auth")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_request')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                  <button type="button" onClick={() => this.runDeviceVerification()} className="btn btn-primary elt-right">
+                    {i18next.t("client_run_device_verification")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_verification')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="scope" className="form-label">
+                    {i18next.t("client_run_scope")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'scope')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <select className="form-select" value="" onChange={this.selectScope}>
+                    {scopeListJsx}
+                  </select>
+                  <input type="text" className="form-control" value={this.state.session.scope} onChange={this.changeScope} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_code" className="form-label">
+                    {i18next.t("client_run_device_auth_code")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_code')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.device_auth_code} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_user_code" className="form-label">
+                    {i18next.t("client_run_device_auth_user_code")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_user_code')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.device_auth_user_code} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_verification_uri" className="form-label">
+                    {i18next.t("client_run_device_auth_verification_uri")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_verification_uri')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <div>
+                    <a href={this.state.session.device_auth_verification_uri} title={i18next.t("client_run_device_auth_verification_uri")}>
+                      {this.state.session.device_auth_verification_uri}
+                    </a>
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_verification_uri/qr-code')} title={i18next.t("client_run_show_qc_code")}>
+                      <i className="fa fa-external-link elt-right" aria-hidden="true"></i>
+                    </a>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_verification_uri_complete" className="form-label">
+                    {i18next.t("client_run_device_auth_verification_uri_complete")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_verification_uri_complete')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <div>
+                    <a href={this.state.session.device_auth_verification_uri_complete} title={i18next.t("client_run_device_auth_verification_uri_complete")}>
+                      {this.state.session.device_auth_verification_uri_complete}
+                    </a>
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_verification_uri_complete/qr-code')} title={i18next.t("client_run_show_qc_code")}>
+                      <i className="fa fa-external-link elt-right" aria-hidden="true"></i>
+                    </a>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_expires_in" className="form-label">
+                    {i18next.t("client_run_device_auth_expires_in")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_expires_in')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.device_auth_expires_in} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="device_auth_interval" className="form-label">
+                    {i18next.t("client_run_device_auth_interval")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'device_auth_interval')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.device_auth_interval} disabled={true} />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="accordion-item">
+            <h2 className="accordion-header" id="headingCiba">
+              <button className={"accordion-button"+highlightCiba} type="button" data-bs-toggle="collapse" data-bs-target="#collapseCiba" aria-expanded="false" aria-controls="collapseCiba">
+                {i18next.t("client_run_ciba_request")}
+              </button>
+            </h2>
+            <div id="collapseCiba" className={"accordion-collapse collapse"+showCiba} aria-labelledby="headingCiba" data-bs-parent="#accordionExec">
+              <div className="accordion-body">
+                <div className="mb-3">
+                  <button type="button" onClick={() => this.runCibaAuth()} className="btn btn-primary">
+                    {i18next.t("client_run_ciba_auth")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'ciba_auth_request')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                  <button type="button" onClick={() => this.runCibaVerification()} className="btn btn-primary elt-right">
+                    {i18next.t("client_run_ciba_verification")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'ciba_auth_verification')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                  <button type="button" onClick={() => this.getCibaNotification()} className="btn btn-primary elt-right">
+                    {i18next.t("client_get_ciba_notification")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'get_ciba_notification')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="scope" className="form-label">
+                    {i18next.t("client_run_scope")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'scope')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <select className="form-select" value="" onChange={this.selectScope}>
+                    {scopeListJsx}
+                  </select>
+                  <input type="text" className="form-control" value={this.state.session.scope} onChange={this.changeScope} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="ciba_client_notification_token" className="form-label">
+                    {i18next.t("client_run_ciba_client_notification_token")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_client_notification_token')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <div className="input-group mb-3">
+                    <input type="text"
+                           className="form-control"
+                           value={this.state.session.ciba_client_notification_token||""}
+                           onChange={(e) => this.changeParam(e, 'ciba_client_notification_token')}
+                           disabled={true} />
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="grant_type" className="form-label">
+                    {i18next.t("client_run_ciba_login_hint_format")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_login_hint_format')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <select className="form-select" value={this.state.session.ciba_login_hint_format+""} onChange={this.selectCibaLoginHintFormat}>
+                    <option value={constant.cibaLoginHintMethod.JSON}>JSON</option>
+                    <option value={constant.cibaLoginHintMethod.JWT}>JWT</option>
+                    <option value={constant.cibaLoginHintMethod.id_token}>ID token</option>
+                  </select>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="client_id" className="form-label">
+                    {i18next.t("client_run_ciba_login_hint")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_login_hint')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <div className="input-group mb-3">
+                    <button className="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" disabled={this.state.session.ciba_login_hint_format===constant.cibaLoginHintMethod.id_token}>
+                      {this.state.ciba_login_hint_identifier}
+                    </button>
+                    <ul className="dropdown-menu">
+                      <li><a className="dropdown-item" onClick={(e) => this.changeCibaLoginHintIdentifier(e, 'sub')} href="#">{i18next.t("client_run_ciba_login_hint_identifier_sub")}</a></li>
+                      <li><a className="dropdown-item" onClick={(e) => this.changeCibaLoginHintIdentifier(e, 'username')} href="#">{i18next.t("client_run_ciba_login_hint_identifier_username")}</a></li>
+                    </ul>
+                    <input type="text" className="form-control" value={this.state.ciba_login_hint} onChange={this.changeCibaLoginHint} />
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="client_id" className="form-label">
+                    {i18next.t("client_run_ciba_binding_message")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_binding_message')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <textarea className="form-control" value={this.state.session.ciba_binding_message} onChange={(e) => this.changeParam(e, 'ciba_binding_message')} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="client_id" className="form-label">
+                    {i18next.t("client_run_ciba_user_code")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_user_code')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.ciba_user_code} onChange={(e) => this.changeParam(e, 'ciba_user_code')} disabled={!this.state.client.backchannel_user_code_parameter} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="ciba_auth_req_id" className="form-label">
+                    {i18next.t("client_run_ciba_auth_req_id")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_auth_req_id')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.ciba_auth_req_id} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="ciba_expires_in" className="form-label">
+                    {i18next.t("client_run_ciba_expires_in")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_expires_in')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.ciba_expires_in} disabled={true} />
+                </div>
+                <div className="mb-3">
+                  <label htmlFor="ciba_interval" className="form-label">
+                    {i18next.t("client_run_ciba_interval")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'ciba_interval')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <input type="text" className="form-control" value={this.state.session.ciba_interval} disabled={true} />
                 </div>
               </div>
             </div>

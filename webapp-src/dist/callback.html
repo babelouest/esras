@@ -32,13 +32,14 @@
     }
 
     window.onload = function() {
-      let urlParams = getQueryParams(window.location.search.substring(1));
+      let urlParamsQuery = getQueryParams(window.location.search.substring(1));
+      let urlParamsHash = getQueryParams(window.location.hash.substring(1));
       $.ajax({
         method: "POST",
         url: document.location.href,
         data: { 
           redirectTo: document.location.href,
-          state: urlParams['state']
+          state: urlParamsQuery['state'] || urlParamsHash['state']
         }
       })
       .then((res) => {

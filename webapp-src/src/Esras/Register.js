@@ -29,6 +29,8 @@ class Register extends Component {
     this.setPubKeyValid = this.setPubKeyValid.bind(this);
     this.toggleGrantType = this.toggleGrantType.bind(this);
     this.changeTokenSigningAlg = this.changeTokenSigningAlg.bind(this);
+    this.changeCibaMode = this.changeCibaMode.bind(this);
+    this.toggleCibaUserCode = this.toggleCibaUserCode.bind(this);
   }
 
   static getDerivedStateFromProps(props, state) {
@@ -142,6 +144,22 @@ class Register extends Component {
     } else {
       delete(client.token_endpoint_signing_alg);
     }
+    this.setState({client: client});
+  }
+  
+  changeCibaMode(e) {
+    let client = this.state.client;
+    if (e.target.value) {
+      client.backchannel_token_delivery_mode = e.target.value;
+    } else {
+      delete(client.backchannel_token_delivery_mode);
+    }
+    this.setState({client: client});
+  }
+  
+  toggleCibaUserCode() {
+    let client = this.state.client;
+    client.backchannel_user_code_parameter = !client.backchannel_user_code_parameter;
     this.setState({client: client});
   }
 
@@ -267,11 +285,15 @@ class Register extends Component {
             <input type="checkbox" className="form-check-input" id="delete_token" checked={this.state.client.grant_types.indexOf('delete_token')>-1} onChange={(e) => this.toggleGrantType(e, 'delete_token')}/>
             <label className="form-check-label" htmlFor="delete_token">delete_token</label>
           </div>
-          {/*<div className="form-group form-check">
+          <div className="form-group form-check">
             <input type="checkbox" className="form-check-input" id="device_authorization" checked={this.state.client.grant_types.indexOf('device_authorization')>-1} onChange={(e) => this.toggleGrantType(e, 'device_authorization')}/>
             <label className="form-check-label" htmlFor="device_authorization">device_authorization</label>
           </div>
-          <small id="grantTypesHelp" className="form-text text-muted">{i18next.t("register_client_grant_types_help")}</small>*/}
+          <div className="form-group form-check">
+            <input type="checkbox" className="form-check-input" id="ciba" checked={this.state.client.grant_types.indexOf('urn:openid:params:grant-type:ciba')>-1} onChange={(e) => this.toggleGrantType(e, 'urn:openid:params:grant-type:ciba')}/>
+            <label className="form-check-label" htmlFor="ciba">ciba</label>
+          </div>
+          <small id="grantTypesHelp" className="form-text text-muted">{i18next.t("register_client_grant_types_help")}</small>
           <hr/>
           <div className="form-group">
             <label htmlFor="grantTypes">{i18next.t("register_client_response_types")}</label>
@@ -315,6 +337,53 @@ class Register extends Component {
             <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_token_endpoint_signing_alg_help")}</small>
             {errorJwks}
           </div>
+          <div className="form-group">
+            <label htmlFor="client_jwks">{i18next.t("register_client_jwks")}</label>
+            <textarea className="form-control" id="client_jwks" placeholder="{  keys: [  {  kty:[...]" value={this.state.pubKey} onChange={(e) => this.changePubkey(e)}/>
+            <small id="jwksHelp" className="form-text text-muted">{i18next.t("register_client_jwks_help")}</small>
+          </div>
+          <hr/>
+          <div className="form-group">
+            <label htmlFor="backchannel_token_delivery_mode">{i18next.t("register_client_backchannel_token_delivery_mode")}</label>
+            <select className="form-control" id="backchannel_token_delivery_mode" value={this.state.client.backchannel_token_delivery_mode} onChange={this.changeCibaMode}>
+              <option value="">None</option>
+              <option value="poll">poll</option>
+              <option value="ping">ping</option>
+              <option value="push">push</option>
+            </select>
+            <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_backchannel_token_delivery_mode_help")}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="displayName">{i18next.t("register_client_backchannel_client_notification_endpoint")}</label>
+            <input type="text" className="form-control" id="displayName" value={this.state.client.backchannel_client_notification_endpoint} disabled={true}/>
+            <small id="displayCibaEndpointHelp" className="form-text text-muted">{i18next.t("register_client_backchannel_client_notification_endpoint_help")}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="authMethod">{i18next.t("register_client_backchannel_authentication_request_signing_alg")}</label>
+            <select className="form-control" id="authMethod" value={this.state.client.backchannel_authentication_request_signing_alg} onChange={this.CibaSigningAlg} disabled={!this.state.client.backchannel_token_delivery_mode}>
+              <option value="">None</option>
+              <option value="HS256">HS256</option>
+              <option value="HS384">HS384</option>
+              <option value="HS512">HS512</option>
+              <option value="RS256">RS256</option>
+              <option value="RS384">RS384</option>
+              <option value="RS512">RS512</option>
+              <option value="ES256">ES256</option>
+              <option value="ES384">ES384</option>
+              <option value="ES512">ES512</option>
+              <option value="PS256">PS256</option>
+              <option value="PS384">PS384</option>
+              <option value="PS512">PS512</option>
+              <option value="EdDSA">EdDSA</option>
+            </select>
+            <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_backchannel_authentication_request_signing_alg_help")}</small>
+            {errorJwks}
+          </div>
+          <div className="form-group form-check">
+            <input type="checkbox" className="form-check-input" id="cibaUserCode" checked={this.state.client.backchannel_user_code_parameter} onChange={this.toggleCibaUserCode} disabled={!this.state.client.backchannel_token_delivery_mode}/>
+            <label className="form-check-label" htmlFor="cibaUserCode">{i18next.t("register_client_backchannel_user_code_parameter")}</label>
+          </div>
+          <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_backchannel_user_code_parameter_help")}</small>
           <hr/>
           <div className="form-group">
             <button type="submit" className="btn btn-primary elt-left" onClick={(e) => this.verifyRegistration(e)} disabled={!this.state.pubKeyValid}>{i18next.t("submit")}</button>

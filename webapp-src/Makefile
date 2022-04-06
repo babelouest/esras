@@ -35,7 +35,7 @@ webapp: build-webapp install-webapp
 polyfill: build-polyfill-webapp install-polyfill
 
 build-webapp:
-	rm -f dist/hutch.js*
+	rm -f dist/bundle.js*
 	$(JSC) run build
 
 install-webapp:

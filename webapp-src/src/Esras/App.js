@@ -26,7 +26,7 @@ class App extends Component {
         redirect_uris: [],
         client_confidential: true,
         token_endpoint_auth_method: 'client_secret_basic',
-        grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization'],
+        grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization', 'urn:openid:params:grant-type:ciba'],
         response_types: ['code', 'token', 'id_token'],
         jwks: ""
       },
@@ -61,9 +61,12 @@ class App extends Component {
             redirect_uris: [this.state.oidcConfig.test_client_redirect_uri],
             client_confidential: true,
             token_endpoint_auth_method: 'client_secret_basic',
-            grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization'],
+            grant_types: ['authorization_code', 'implicit', 'client_credentials', 'refresh_token', 'delete_token', 'device_authorization', 'urn:openid:params:grant-type:ciba'],
             response_types: ['code', 'token', 'id_token'],
-            jwks: ""
+            jwks: "",
+            backchannel_client_notification_endpoint: this.state.oidcConfig.test_client_ciba_notification_endpoint,
+            backchannel_user_code_parameter: false,
+            sector_identifier_uri: [this.state.oidcConfig.test_client_redirect_uri, this.state.oidcConfig.test_client_ciba_notification_endpoint]
           }});
         } else if (message.target === 'edit') {
           this.setState({nav: 'register', curClient: message.client.registration});
@@ -167,7 +170,7 @@ class App extends Component {
     if (this.state.nav === 'register') {
       body = <Register client={this.state.curClient} />
     } else if (this.state.nav === 'exec') {
-      body = <Exec client={this.state.curClient} oidcConfig={this.state.oidcConfig} menu={this.state.runMenu} />
+      body = <Exec client={this.state.curClient} oidcConfig={this.state.oidcConfig} menu={this.state.runMenu} profile={this.state.profile} />
     } else {
       body = <List clients={this.state.clients} />
     }
