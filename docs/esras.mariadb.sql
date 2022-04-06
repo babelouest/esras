@@ -34,6 +34,7 @@ CREATE TABLE e_client (
   ec_client_secret VARCHAR(128),
   ec_registration_access_token VARCHAR(128),
   ec_registration_client_uri VARCHAR(512),
+  ec_registration_ciba_client_notification_token VARCHAR(1024),
   ec_registration MEDIUMBLOB,
   FOREIGN KEY(p_id) REFERENCES profile(p_id) ON DELETE CASCADE
 );
@@ -51,6 +52,8 @@ CREATE TABLE e_client_session (
   ec_id INT(11) NOT NULL,
   ecs_state VARCHAR(128),
   ecs_session MEDIUMBLOB,
+  ecs_ciba_auth_req_id VARCHAR(128),
+  ecs_ciba_notification_request MEDIUMBLOB,
   FOREIGN KEY(s_id) REFERENCES session(s_id) ON DELETE CASCADE,
   FOREIGN KEY(ec_id) REFERENCES e_client(ec_id) ON DELETE CASCADE
 );
