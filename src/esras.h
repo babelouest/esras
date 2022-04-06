@@ -116,6 +116,7 @@ struct config_elements {
   json_t                                       * j_server_config;
   json_t                                       * j_server_jwks;
   char                                         * test_client_redirect_uri;
+  char                                         * test_client_ciba_notification_endpoint;
   char                                         * test_callback_page;
   char                                         * register_scope;
 };
@@ -153,16 +154,22 @@ int add_client(struct config_elements * config, json_t * j_client, json_int_t p_
 int set_client(struct config_elements * config, json_t * j_client, json_int_t ec_id);
 int disable_client(struct config_elements * config, json_int_t ec_id);
 
-int exec_set_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, json_t * j_session);
+int exec_set_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, json_t * j_session, const char * ciba_auth_req_id);
+int exec_delete_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 json_t * exec_get_i_session(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 json_t * exec_get_i_session_from_state(struct config_elements * config, const char * session_id, const char * state, json_int_t p_id);
 int exec_generate(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, const char * property);
 json_t * exec_run_auth(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_run_par(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 json_t * exec_parse_callback(struct config_elements * config, const char * session_id, const char * redirect_to, const char * state, json_int_t p_id);
 json_t * exec_run_token(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 json_t * exec_run_userinfo(struct config_elements * config, const char * session_id, const char * client_id, int get_jwt, json_int_t p_id);
 json_t * exec_run_introspection(struct config_elements * config, const char * session_id, const char * client_id, int get_jwt, json_int_t p_id);
 json_t * exec_run_revocation(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_run_device_auth(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_run_ciba_auth(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+void exec_process_ciba_notification(struct config_elements * config, const char * ciba_auth_req_id, const struct _u_request * request);
+json_t * exec_get_ciba_notification(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 
 int is_client_registration_valid(struct config_elements * config, json_t * j_client);
 json_t * register_client(struct config_elements * config, json_t * j_client);
@@ -187,13 +194,19 @@ int callback_esras_disable_client (const struct _u_request * request, struct _u_
 
 int callback_esras_exec_get_session (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_set_session (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_delete_session (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_generate (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_run_auth (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_par (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_callback (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_parse_callback (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_run_token (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_run_userinfo (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_run_introspect (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_exec_run_revoke (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_device_auth (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_exec_run_ciba_auth (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_get_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 #endif

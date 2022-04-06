@@ -97,7 +97,7 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
       response->status = 302;
 
       // Uncomment this line if you're working on the frontend
-      //y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+      y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
 
       ret = U_CALLBACK_COMPLETE;
     } else {
@@ -266,7 +266,7 @@ int callback_esras_disable_client (const struct _u_request * request, struct _u_
 int callback_esras_oidc_config (const struct _u_request * request, struct _u_response * response, void * user_data) {
   UNUSED(request);
   struct config_elements * config = (struct config_elements *)user_data;
-  json_t * j_result = json_pack("{sO*sO*ss*}", "config", config->j_server_config, "jwks", config->j_server_jwks, "test_client_redirect_uri", config->test_client_redirect_uri);
+  json_t * j_result = json_pack("{sO*sO*ss*ss*}", "config", config->j_server_config, "jwks", config->j_server_jwks, "test_client_redirect_uri", config->test_client_redirect_uri, "test_client_ciba_notification_endpoint", config->test_client_ciba_notification_endpoint);
   
   ulfius_set_json_body_response(response, 200, j_result);
   json_decref(j_result);
@@ -294,13 +294,26 @@ int callback_esras_exec_set_session (const struct _u_request * request, struct _
   json_t * j_session = ulfius_get_json_body_request(request, NULL);
   int res;
   
-  if ((res = exec_set_i_session(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")), j_session)) == E_ERROR_UNAUTHORIZED) {
+  if ((res = exec_set_i_session(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")), j_session, NULL)) == E_ERROR_UNAUTHORIZED) {
     response->status = 403;
   } else if (res != E_OK) {
     y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_set_session - Error exec_set_i_session");
     response->status = 500;
   }
   json_decref(j_session);
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_delete_session (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  int res;
+  
+  if ((res = exec_delete_i_session(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")))) == E_ERROR_UNAUTHORIZED) {
+    response->status = 403;
+  } else if (res != E_OK) {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_delete_session - Error exec_delete_i_session");
+    response->status = 500;
+  }
   return U_CALLBACK_CONTINUE;
 }
 
@@ -333,6 +346,25 @@ int callback_esras_exec_run_auth (const struct _u_request * request, struct _u_r
     response->status = 403;
   } else {
     y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_auth - Error exec_run_auth");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_par (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_par(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "par"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    response->status = 400;
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_par - Error exec_run_par");
     response->status = 500;
   }
   json_decref(j_result);
@@ -474,3 +506,70 @@ int callback_esras_exec_run_revoke (const struct _u_request * request, struct _u
   return U_CALLBACK_CONTINUE;
 }
 
+int callback_esras_exec_run_device_auth (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_device_auth(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "device"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "device"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_device_auth - Error exec_run_device_auth");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_exec_run_ciba_auth (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_run_ciba_auth(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "ciba"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "ciba"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_exec_run_ciba_auth - Error exec_run_ciba_auth");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  UNUSED(response);
+  struct config_elements * config = (struct config_elements *)user_data;
+  
+  if ((size_t)u_map_get_case_length(request->map_header, "Authorization") >= o_strlen("Bearer ")) {
+    exec_process_ciba_notification(config, u_map_get_case(request->map_header, "Authorization")+o_strlen("Bearer "), request);
+  }
+  
+  return U_CALLBACK_COMPLETE;
+}
+
+int callback_esras_get_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_result = exec_get_ciba_notification(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")));
+
+  if (check_result_value(j_result, E_OK)) {
+    ulfius_set_json_body_response(response, 200, json_object_get(j_result, "ciba"));
+  } else if (check_result_value(j_result, E_ERROR_PARAM)) {
+    ulfius_set_json_body_response(response, 400, json_object_get(j_result, "ciba"));
+  } else if (check_result_value(j_result, E_ERROR_UNAUTHORIZED)) {
+    response->status = 403;
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_get_ciba_notification - Error exec_run_ciba_auth");
+    response->status = 500;
+  }
+  json_decref(j_result);
+
+  return U_CALLBACK_CONTINUE;
+}

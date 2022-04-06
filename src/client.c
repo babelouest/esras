@@ -301,6 +301,10 @@ int disable_client(struct config_elements * config, json_int_t ec_id) {
 
 int is_client_registration_valid(struct config_elements * config, json_t * j_client) {
   int ret = I_OK;
+  json_t * j_element = NULL;
+  size_t index = 0, domain_len;
+  const char * redirect_uri;
+  char * domain, ** domain_array;
   
   do {
     if (!json_is_object(j_client)) {
@@ -316,6 +320,34 @@ int is_client_registration_valid(struct config_elements * config, json_t * j_cli
     if (0 != o_strcmp(config->test_client_redirect_uri, json_string_value(json_array_get(json_object_get(j_client, "redirect_uris"), 0)))) {
       ret = I_ERROR_PARAM;
       break;
+    }
+    
+    json_array_foreach(json_object_get(j_client, "redirect_uris"), index, j_element) {
+      redirect_uri = json_string_value(j_element);
+      if (0 != o_strncmp(redirect_uri, "http://", 7) && 0 != o_strncmp(redirect_uri, "https://", 8)) {
+        ret = I_ERROR_PARAM;
+      } else {
+        if (0 == o_strncmp(redirect_uri, "http://", 7)) {
+          redirect_uri += 7;
+        } else {
+          redirect_uri += 8;
+        }
+        if (o_strchr(redirect_uri, '/') != NULL) {
+          domain = o_strndup(redirect_uri, (o_strchr(redirect_uri, '/')-redirect_uri));
+        } else {
+          domain = o_strdup(redirect_uri);
+        }
+        domain_array = NULL;
+        if ((domain_len = split_string(domain, ".", &domain_array))) {
+          if (0 != o_strncasecmp(domain_array[0], "localhost", 9) && 0 != o_strncmp(domain_array[0], "127.0.0.1", 9)) {
+            ret = I_ERROR_PARAM;
+          } else if (0 != o_strcasecmp(domain_array[domain_len-1], "local")) {
+            ret = I_ERROR_PARAM;
+          }
+        }
+        free_string_array(domain_array);
+        o_free(domain);
+      }
     }
   } while (0);
   return ret;

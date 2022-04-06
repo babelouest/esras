@@ -4,7 +4,7 @@
  *
  * Copyright 2020-2022 Nicolas Mora <mail@babelouest.org>
  *
- * Version 20220201
+ * Version 20220318
  *
  * The MIT License (MIT)
  *
@@ -179,7 +179,7 @@ static int callback_static_file_uncompressed (const struct _u_request * request,
       *strchr(file_requested, '?') = '\0';
     }
 
-    if (file_requested == NULL || o_strlen(file_requested) == 0 || 0 == o_strcmp("/", file_requested)) {
+    if (file_requested == NULL || o_strnullempty(file_requested) || 0 == o_strcmp("/", file_requested)) {
       o_free(url_dup_save);
       url_dup_save = file_requested = o_strdup("index.html");
     }
@@ -266,7 +266,7 @@ void u_clean_compressed_inmemory_website_config(struct _u_compressed_inmemory_we
 
 int u_add_mime_types_compressed(struct _u_compressed_inmemory_website_config * config, const char * mime_type) {
   int ret;
-  if (config != NULL && o_strlen(mime_type)) {
+  if (config != NULL && !o_strnullempty(mime_type)) {
     if ((config->mime_types_compressed = o_realloc(config->mime_types_compressed, (config->mime_types_compressed_size+2)*sizeof(char*))) != NULL) {
       config->mime_types_compressed[config->mime_types_compressed_size] = o_strdup(mime_type);
       config->mime_types_compressed[config->mime_types_compressed_size+1] = NULL;
@@ -318,7 +318,7 @@ int callback_static_compressed_inmemory_website (const struct _u_request * reque
       *strchr(file_requested, '?') = '\0';
     }
 
-    if (file_requested == NULL || o_strlen(file_requested) == 0 || 0 == o_strcmp("/", file_requested)) {
+    if (file_requested == NULL || o_strnullempty(file_requested) || 0 == o_strcmp("/", file_requested)) {
       o_free(url_dup_save);
       url_dup_save = file_requested = o_strdup("index.html");
     }
@@ -336,9 +336,23 @@ int callback_static_compressed_inmemory_website (const struct _u_request * reque
           if (compress_mode == U_COMPRESS_GZIP && config->allow_cache_compressed && u_map_has_key(&config->gzip_files, file_requested)) {
             ulfius_set_binary_body_response(response, 200, u_map_get(&config->gzip_files, file_requested), u_map_get_length(&config->gzip_files, file_requested));
             u_map_put(response->map_header, U_CONTENT_HEADER, U_ACCEPT_GZIP);
+            
+            content_type = u_map_get_case(&config->mime_types, get_filename_ext(file_requested));
+            if (content_type == NULL) {
+              content_type = u_map_get(&config->mime_types, "*");
+            }
+            u_map_put(response->map_header, "Content-Type", content_type);
+            u_map_copy_into(response->map_header, &config->map_header);
           } else if (compress_mode == U_COMPRESS_DEFL && config->allow_cache_compressed && u_map_has_key(&config->deflate_files, file_requested)) {
             ulfius_set_binary_body_response(response, 200, u_map_get(&config->deflate_files, file_requested), u_map_get_length(&config->deflate_files, file_requested));
             u_map_put(response->map_header, U_CONTENT_HEADER, U_ACCEPT_DEFLATE);
+            
+            content_type = u_map_get_case(&config->mime_types, get_filename_ext(file_requested));
+            if (content_type == NULL) {
+              content_type = u_map_get(&config->mime_types, "*");
+            }
+            u_map_put(response->map_header, "Content-Type", content_type);
+            u_map_copy_into(response->map_header, &config->map_header);
           } else {
             file_path = msprintf("%s/%s", ((struct _u_compressed_inmemory_website_config *)user_data)->files_path, file_requested);
 

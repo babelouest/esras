@@ -85,6 +85,7 @@ int main (int argc, char ** argv) {
   config->oidc_is_jwt_access_token = 0;
   config->client_id = NULL;
   config->test_client_redirect_uri = NULL;
+  config->test_client_ciba_notification_endpoint = NULL;
   config->test_callback_page = o_strdup("callback.html");
   config->client_secret = NULL;
   config->client_secret_key = NULL;
@@ -139,7 +140,7 @@ int main (int argc, char ** argv) {
     exit_server(&config, ESRAS_ERROR);
   }
 
-  if (!y_init_logs(ESRAS_LOG_NAME, config->log_mode, config->log_level, config->log_file, "Starting Dagda Server")) {
+  if (!y_init_logs(ESRAS_LOG_NAME, config->log_mode, config->log_level, config->log_file, "Starting Esras Server")) {
     fprintf(stderr, "Error initializing logs\n");
     exit_server(&config, ESRAS_ERROR);
   }
@@ -183,14 +184,20 @@ int main (int argc, char ** argv) {
   // Client execution
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/exec/session/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_get_session, config);
   ulfius_add_endpoint_by_val(config->instance, "PUT", config->api_prefix, "/exec/session/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_set_session, config);
+  ulfius_add_endpoint_by_val(config->instance, "DELETE", config->api_prefix, "/exec/session/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_delete_session, config);
   ulfius_add_endpoint_by_val(config->instance, "PUT", config->api_prefix, "/exec/generate/:client_id/:property", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_generate, config);
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/exec/auth/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_auth, config);
+  ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/exec/par/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_par, config);
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/exec/callback", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_callback, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/callback", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_parse_callback, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/token/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_token, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/userinfo/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_userinfo, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/introspection/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_introspect, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/revocation/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_revoke, config);
+  ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/device/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_device_auth, config);
+  ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/ciba/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_ciba_auth, config);
+  ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/notification/ciba", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_ciba_notification, config);
+  ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/notification/ciba/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_get_ciba_notification, config);
 
   // Other endpoints
   ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
@@ -206,7 +213,7 @@ int main (int argc, char ** argv) {
   u_map_put(config->instance->default_headers, "Pragma", "no-cache");
   u_map_put(config->instance->default_headers, "X-Frame-Options", "deny");
 
-  y_log_message(Y_LOG_LEVEL_INFO, "Start Dagda on port %d, prefix: %s, secure: %s, scope %s, index url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->oidc_scope, config->index_url);
+  y_log_message(Y_LOG_LEVEL_INFO, "Start Esras on port %d, prefix: %s, secure: %s, scope %s, index url: %s", config->instance->port, config->api_prefix, config->use_secure_connection?"true":"false", config->oidc_scope, config->index_url);
 
   if (config->use_secure_connection) {
     char * key_file = get_file_content(config->secure_connection_key_file);
@@ -274,6 +281,7 @@ void exit_server(struct config_elements ** config, int exit_value) {
     json_decref((*config)->j_server_config);
     json_decref((*config)->j_server_jwks);
     o_free((*config)->test_client_redirect_uri);
+    o_free((*config)->test_client_ciba_notification_endpoint);
     o_free((*config)->test_callback_page);
     o_free((*config)->register_scope);
     o_free((*config)->instance);
@@ -560,7 +568,7 @@ int build_config_from_file(struct config_elements * config) {
                 ret = 0;
                 break;
               } else {
-                if (h_exec_query_sqlite(config->conn, "PRAGMA foreign_keys = ON;") != H_OK) {
+                if (h_execute_query_sqlite(config->conn, "PRAGMA foreign_keys = ON;") != H_OK) {
                   y_log_message(Y_LOG_LEVEL_ERROR, "Error executing sqlite3 query 'PRAGMA foreign_keys = ON;, exiting'");
                   ret = 0;
                   break;
@@ -647,6 +655,15 @@ int build_config_from_file(struct config_elements * config) {
         config->test_client_redirect_uri = o_strdup(str_value);
         if (config->test_client_redirect_uri == NULL) {
           fprintf(stderr, "Error allocating config->test_client_redirect_uri, exiting\n");
+          ret = 0;
+          break;
+        }
+      }
+
+      if (config_lookup_string(&cfg, "test_client_ciba_notification_endpoint", &str_value) == CONFIG_TRUE) {
+        config->test_client_ciba_notification_endpoint = o_strdup(str_value);
+        if (config->test_client_ciba_notification_endpoint == NULL) {
+          fprintf(stderr, "Error allocating config->test_client_ciba_notification_endpoint, exiting\n");
           ret = 0;
           break;
         }
@@ -777,7 +794,7 @@ int build_config_from_file(struct config_elements * config) {
  * Print help message to output file specified
  */
 void print_help(FILE * output) {
-  fprintf(output, "\nDagda - Planificateur d'équipe\n");
+  fprintf(output, "\Esras - OAuth2/OIDC client program manager to test or validate OAuth2/OIDC Authentication Server, for multiple users, with database persistence.\n");
   fprintf(output, "\n");
   fprintf(output, "Version %s\n", _ESRAS_VERSION_);
   fprintf(output, "\n");
@@ -857,6 +874,12 @@ int check_config(struct config_elements * config) {
 
     if (!o_strlen(config->test_client_redirect_uri)) {
       fprintf(stderr, "test_client_redirect_uri missing, exiting\n");
+      ret = 0;
+      break;
+    }
+
+    if (!o_strlen(config->test_client_ciba_notification_endpoint)) {
+      fprintf(stderr, "test_client_ciba_notification_endpoint missing, exiting\n");
       ret = 0;
       break;
     }
