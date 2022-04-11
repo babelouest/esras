@@ -65,7 +65,17 @@ class Exec extends Component {
       introspection: {},
       use_dpop: false,
       ciba_login_hint: props.profile.sub||"",
-      ciba_login_hint_identifier: "sub"
+      ciba_login_hint_identifier: "sub",
+      rar: {
+        locations: [],
+        actions: [],
+        datatypes: [],
+        identifier: "",
+        privileges: []
+      },
+      rarList: [],
+      rar_type: "",
+      rar_property: {}
     };
     this.state.session.ciba_login_hint = JSON.stringify({sub: props.profile.sub||""});
     
@@ -100,6 +110,12 @@ class Exec extends Component {
     this.changeCibaLoginHint = this.changeCibaLoginHint.bind(this);
     this.changeCibaLoginHintIdentifier = this.changeCibaLoginHintIdentifier.bind(this);
     this.setCibaLoginHintSession = this.setCibaLoginHintSession.bind(this);
+    this.selectRarType = this.selectRarType.bind(this);
+    this.changeRarArrayProperty = this.changeRarArrayProperty.bind(this);
+    this.addRarArrayProperty = this.addRarArrayProperty.bind(this);
+    this.deleteRarArrayProperty = this.deleteRarArrayProperty.bind(this);
+    this.changeRarIdentifier = this.changeRarIdentifier.bind(this);
+    this.addRar = this.addRar.bind(this);
     
     this.getSession();
   }
@@ -601,6 +617,81 @@ class Exec extends Component {
     }
     this.setState({session: session}, () => {
       this.saveSession(false);
+    });
+  }
+
+  selectRarType(e) {
+    this.setState({rar_type: e.target.value});
+  }
+  
+  changeRarArrayProperty(e, property) {
+    let rar_property = this.state.rar_property;
+    rar_property[property] = e.target.value;
+    this.setState({rar_property: rar_property});
+  }
+  
+  addRarArrayProperty(property) {
+    let rar = this.state.rar;
+    let rar_property = this.state.rar_property;
+    rar[property].push(rar_property[property]);
+    rar_property[property] = "";
+    this.setState({rar: rar, rar_property: rar_property});
+  }
+  
+  deleteRarArrayProperty(e, index, property) {
+    e.preventDefault();
+    let rar = this.state.rar;
+    rar[property].splice(index, 1);
+    this.setState({rar: rar});
+  }
+  
+  changeRarIdentifier(e) {
+    let rar = this.state.rar;
+    rar.identifier = e.target.value;
+    this.setState({rar: rar});
+  }
+  
+  addRar() {
+    let rar = Object.assign({}, this.state.rar);
+    if (!rar.locations.length) {
+      delete(rar.locations);
+    }
+    if (!rar.actions.length) {
+      delete(rar.actions);
+    }
+    if (!rar.datatypes.length) {
+      delete(rar.datatypes);
+    }
+    if (!rar.privileges.length) {
+      delete(rar.privileges);
+    }
+    if (!rar.identifier) {
+      delete(rar.identifier);
+    }
+    return apiManager.request("exec/rar/" + this.state.client.client_id + "/" + this.state.rar_type, "POST", rar)
+    .then((res) => {
+      this.getSession()
+      .then(() => {
+        messageDispatcher.sendMessage("Notification", {type: "info", message: i18next.t("client_add_rar_success")});
+        let rar = this.state.rar;
+        let rarList = this.state.rarList;
+        rarList.push(rar);
+        this.setState({rarList: rarList,
+          rar: {
+            locations: [],
+            actions: [],
+            datatypes: [],
+            identifier: "",
+            privileges: []
+          },
+          rar_type: "",
+          rar_property: {}
+        });
+      });
+    })
+    .fail((err) => {
+      messageDispatcher.sendMessage("Notification", {type: "danger", message: i18next.t("client_add_rar_error")});
+      this.getSession();
     });
   }
 
@@ -1382,6 +1473,14 @@ class Exec extends Component {
             {this.state.session.device_auth_verification_uri_complete}
           </a>
       </div>
+    } else if (help === 'rar/show') {
+      messageJsx.message =
+      <div>
+        <p className="alert alert-secondary">{i18next.t("help_rar_show_list")}</p>
+        <pre>
+          {JSON.stringify(this.state.session.authorization_details, null, 2)}
+        </pre>
+      </div>
     } else {
       messageJsx.message = <p>{i18next.t("help_"+help)}</p>
     }
@@ -1420,7 +1519,8 @@ class Exec extends Component {
         showUserinfo = "", highlightUserinfo = " collapsed",
         showTokenIntrospection = "", highlightTokenIntrospection = " collapsed",
         showDevice = "", highlightDevice = " collapsed",
-        showCiba = "", highlightCiba = " collapsed";
+        showCiba = "", highlightCiba = " collapsed",
+        showRar = "", highlightRar = " collapsed";
     if (this.state.menu === "credentals") {
       showCredentials = " show";
       highlightCredentials = "";
@@ -1445,6 +1545,9 @@ class Exec extends Component {
     } else if (this.state.menu === "ciba") {
       showCiba = " show";
       highlightCiba = ""
+    } else if (this.state.menu === "rar") {
+      showRar = " show";
+      highlightRar = ""
     }
     let errorJsx;
     if (this.state.session.error) {
@@ -1470,6 +1573,60 @@ class Exec extends Component {
     let clientKidListJsx = [<option value="" key={-1}>{i18next.t("client_run_client_kid_first")}</option>];
     this.state.session.client_jwks.keys.forEach((jwk, index) => {
       clientKidListJsx.push(<option value={jwk.kid} key={index}>{jwk.alg + " - " + jwk.kid}</option>);
+    });
+    let rarTypesJsx = [<option value="" key={-1}></option>], rar_locations = [], rar_actions = [], rar_datatypes = [], rar_privileges = [];
+    this.state.oidcConfig.config.authorization_details_types_supported.forEach((type, index) => {
+      rarTypesJsx.push(
+        <option value={type} key={index}>{type}</option>
+      );
+    });
+    this.state.rar.locations.forEach((location, index) => {
+      rar_locations.push(<a href="#"
+                              onClick={(e) => this.deleteRarArrayProperty(e, index, 'locations')}
+                              key={index}>
+                             <span className="badge bg-primary elt-right">
+                              {location}
+                              <span className="badge bg-secondary elt-right">
+                                <i className="fa fa-times"></i>
+                              </span>
+                            </span>
+                          </a>);
+    });
+    this.state.rar.actions.forEach((action, index) => {
+      rar_actions.push(<a href="#"
+                              onClick={(e) => this.deleteRarArrayProperty(e, index, 'actions')}
+                              key={index}>
+                             <span className="badge bg-primary elt-right">
+                              {action}
+                              <span className="badge bg-secondary elt-right">
+                                <i className="fa fa-times"></i>
+                              </span>
+                            </span>
+                          </a>);
+    });
+    this.state.rar.datatypes.forEach((datatype, index) => {
+      rar_datatypes.push(<a href="#"
+                              onClick={(e) => this.deleteRarArrayProperty(e, index, 'datatypes')}
+                              key={index}>
+                             <span className="badge bg-primary elt-right">
+                              {datatype}
+                              <span className="badge bg-secondary elt-right">
+                                <i className="fa fa-times"></i>
+                              </span>
+                            </span>
+                          </a>);
+    });
+    this.state.rar.privileges.forEach((privilege, index) => {
+      rar_privileges.push(<a href="#"
+                              onClick={(e) => this.deleteRarArrayProperty(e, index, 'privileges')}
+                              key={index}>
+                             <span className="badge bg-primary elt-right">
+                              {privilege}
+                              <span className="badge bg-secondary elt-right">
+                                <i className="fa fa-times"></i>
+                              </span>
+                            </span>
+                          </a>);
     });
     return (
       <div>
@@ -1618,7 +1775,7 @@ class Exec extends Component {
                     <option value={constant.authMethod.Post}>POST</option>
                   </select>
                 </div>
-                {/*<div className="mb-3">
+                <div className="mb-3">
                   <label htmlFor="auth_method_parameters" className="form-label">
                     {i18next.t("client_run_auth_method_parameters")}
                     <a href="#" onClick={(e) => this.showHelp(e, 'auth_method_parameters')}>
@@ -1629,10 +1786,10 @@ class Exec extends Component {
                     <option value={0}>Plain</option>
                     <option value={constant.authMethod.JwtSignSecret}>Jwt Sign Secret</option>
                     <option value={constant.authMethod.JwtSignPrivkey}>Jwt Sign Privkey</option>
-                    <option value={constant.authMethod.JwtEncryptSecret}>Jwt Encrypt Secret</option>
-                    <option value={constant.authMethod.JwtEncryptPubkey}>Jwt Encrypt Pubkey</option>
+                    {/*<option value={constant.authMethod.JwtEncryptSecret}>Jwt Encrypt Secret</option>
+                    <option value={constant.authMethod.JwtEncryptPubkey}>Jwt Encrypt Pubkey</option>*/}
                   </select>
-                </div>*/}
+                </div>
                 <div className="mb-3">
                   <label htmlFor="scope" className="form-label">
                     {i18next.t("client_run_scope")}
@@ -2176,6 +2333,114 @@ class Exec extends Component {
                     </a>
                   </label>
                   <input type="text" className="form-control" value={this.state.session.ciba_interval} disabled={true} />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="accordion-item">
+            <h2 className="accordion-header" id="headingRar">
+              <button className={"accordion-button"+highlightRar} type="button" data-bs-toggle="collapse" data-bs-target="#collapseRar" aria-expanded="false" aria-controls="collapseRar">
+                {i18next.t("client_run_rar_request")}
+              </button>
+            </h2>
+            <div id="collapseRar" className={"accordion-collapse collapse"+showRar} aria-labelledby="headingRar" data-bs-parent="#accordionExec">
+              <div className="accordion-body">
+                <div className="mb-3">
+                  <label htmlFor="grant_type" className="form-label">
+                    {i18next.t("client_run_rar_types")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_types')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <select className="form-select" value={this.state.rar_type} onChange={this.selectRarType}>
+                    {rarTypesJsx}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="rar_locations">
+                    {i18next.t("rar_locations")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_locations')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>{rar_locations}
+                  <div className="input-group mb-3">
+                    <input type="text" className="form-control" id="rar_locations" value={this.state.rar_property.locations} onChange={(e) => this.changeRarArrayProperty(e, 'locations')}/>
+                    <div className="input-group-append">
+                      <button className="btn btn-outline-secondary" type="button" id="button-addon2" onClick={(e) => this.addRarArrayProperty('locations')} disabled={!this.state.rar_property.locations}>
+                        <i className="fa fa-plus" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="rar_actions">
+                    {i18next.t("rar_actions")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_actions')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>{rar_actions}
+                  <div className="input-group mb-3">
+                    <input type="text" className="form-control" id="rar_actions" value={this.state.rar_property.actions} onChange={(e) => this.changeRarArrayProperty(e, 'actions')}/>
+                    <div className="input-group-append">
+                      <button className="btn btn-outline-secondary" type="button" id="button-addon2" onClick={(e) => this.addRarArrayProperty('actions')} disabled={!this.state.rar_property.actions}>
+                        <i className="fa fa-plus" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="rar_datatypes">
+                    {i18next.t("rar_datatypes")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_datatypes')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>{rar_datatypes}
+                  <div className="input-group mb-3">
+                    <input type="text" className="form-control" id="rar_datatypes" value={this.state.rar_property.datatypes} onChange={(e) => this.changeRarArrayProperty(e, 'datatypes')}/>
+                    <div className="input-group-append">
+                      <button className="btn btn-outline-secondary" type="button" id="button-addon2" onClick={(e) => this.addRarArrayProperty('datatypes')} disabled={!this.state.rar_property.datatypes}>
+                        <i className="fa fa-plus" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="rar_identifier">
+                    {i18next.t("rar_identifier")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_identifier')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>
+                  <div className="input-group mb-3">
+                    <input type="text" className="form-control" id="rar_identifier" value={this.state.rar.identifier} onChange={(e) => this.changeRarIdentifier(e)}/>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="rar_privileges">
+                    {i18next.t("rar_privileges")}
+                    <a href="#" onClick={(e) => this.showHelp(e, 'rar_privileges')}>
+                      <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                    </a>
+                  </label>{rar_privileges}
+                  <div className="input-group mb-3">
+                    <input type="text" className="form-control" id="rar_privileges" value={this.state.rar_property.privileges} onChange={(e) => this.changeRarArrayProperty(e, 'privileges')}/>
+                    <div className="input-group-append">
+                      <button className="btn btn-outline-secondary" type="button" id="button-addon2" onClick={(e) => this.addRarArrayProperty('privileges')} disabled={!this.state.rar_property.privileges}>
+                        <i className="fa fa-plus" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <button type="button" onClick={() => this.addRar()} className="btn btn-primary" disabled={!this.state.rar_type}>
+                    {i18next.t("client_run_rar_add")}
+                  </button>
+                  <a href="#" onClick={(e) => this.showHelp(e, 'rar_add')}>
+                    <i className="fa fa-question-circle-o elt-right" aria-hidden="true"></i>
+                  </a>
+                  <button type="button" onClick={() => this.showHelp(false, 'rar/show')} className="btn btn-primary elt-right">
+                    {i18next.t("client_run_rar_show", {count: ((this.state.session&&this.state.session.authorization_details)?this.state.session.authorization_details.length:0)})}
+                  </button>
                 </div>
               </div>
             </div>

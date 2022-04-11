@@ -66,7 +66,7 @@ class App extends Component {
             jwks: "",
             backchannel_client_notification_endpoint: this.state.oidcConfig.test_client_ciba_notification_endpoint,
             backchannel_user_code_parameter: false,
-            sector_identifier_uri: [this.state.oidcConfig.test_client_redirect_uri, this.state.oidcConfig.test_client_ciba_notification_endpoint]
+            authorization_details_types: []
           }});
         } else if (message.target === 'edit') {
           this.setState({nav: 'register', curClient: message.client.registration});
@@ -168,7 +168,7 @@ class App extends Component {
 	render() {
     var body, messageJsx;
     if (this.state.nav === 'register') {
-      body = <Register client={this.state.curClient} />
+      body = <Register client={this.state.curClient} oidcConfig={this.state.oidcConfig} />
     } else if (this.state.nav === 'exec') {
       body = <Exec client={this.state.curClient} oidcConfig={this.state.oidcConfig} menu={this.state.runMenu} profile={this.state.profile} />
     } else {

@@ -12,6 +12,7 @@ class Register extends Component {
 
     this.state = {
       client: props.client,
+      oidcConfig: props.oidcConfig,
       redirectUri: "",
       allowAddRedirectUri: false,
       pubKey: props.client.jwks?JSON.stringify(props.client.jwks):"",
@@ -136,6 +137,16 @@ class Register extends Component {
     }
     this.setState({client: client});
   }
+
+  toggleAuthDetailsType(e, type) {
+    let client = this.state.client;
+    if (client.authorization_details_types.indexOf(type) !== -1) {
+      client.authorization_details_types.splice(client.authorization_details_types.indexOf(type), 1);
+    } else {
+      client.authorization_details_types.push(type);
+    }
+    this.setState({client: client});
+  }
   
   changeTokenSigningAlg(e) {
     let client = this.state.client;
@@ -198,7 +209,7 @@ class Register extends Component {
   }
 
 	render() {
-    let redirect_uris = [], errorJwks;
+    let redirect_uris = [], errorJwks, authorization_details_types_jsx = [];
     this.state.client.redirect_uris.forEach((redirect_uri, index) => {
       if (!index) {
         redirect_uris.push(<span key={index} className="badge bg-primary elt-right">{redirect_uri}</span>)
@@ -220,6 +231,14 @@ class Register extends Component {
         {i18next.t("register_client_jwks_required")}
       </div>;
     }
+    this.state.oidcConfig.config.authorization_details_types_supported.forEach((type, index) => {
+      authorization_details_types_jsx.push(
+        <div className="form-group form-check" key={index}>
+          <input type="checkbox" className="form-check-input" id={"authorization_detail_"+type} checked={this.state.client.authorization_details_types.indexOf(type)>-1} onChange={(e) => this.toggleAuthDetailsType(e, type)}/>
+          <label className="form-check-label" htmlFor={"authorization_detail_"+type}>{type}</label>
+        </div>
+      );
+    });
     return (
       <div>
         <h2>
@@ -384,6 +403,12 @@ class Register extends Component {
             <label className="form-check-label" htmlFor="cibaUserCode">{i18next.t("register_client_backchannel_user_code_parameter")}</label>
           </div>
           <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_backchannel_user_code_parameter_help")}</small>
+          <hr/>
+          <div className="form-group">
+            <label htmlFor="grantTypes">{i18next.t("register_client_authorization_details_types")}</label>
+          </div>
+          {authorization_details_types_jsx}
+          <small id="authMethodHelp" className="form-text text-muted">{i18next.t("register_client_authorization_details_types_help")}</small>
           <hr/>
           <div className="form-group">
             <button type="submit" className="btn btn-primary elt-left" onClick={(e) => this.verifyRegistration(e)} disabled={!this.state.pubKeyValid}>{i18next.t("submit")}</button>
