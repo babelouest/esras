@@ -198,6 +198,7 @@ int main (int argc, char ** argv) {
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/ciba/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_exec_run_ciba_auth, config);
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/notification/ciba", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_ciba_notification, config);
   ulfius_add_endpoint_by_val(config->instance, "GET", config->api_prefix, "/notification/ciba/:client_id", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_get_ciba_notification, config);
+  ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/rar/:client_id/:type", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_rar_add_type, config);
 
   // Other endpoints
   ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
@@ -670,6 +671,7 @@ int build_config_from_file(struct config_elements * config) {
       }
 
       if (config_lookup_string(&cfg, "test_callback_page", &str_value) == CONFIG_TRUE) {
+        o_free(config->test_callback_page);
         config->test_callback_page = o_strdup(str_value);
         if (config->test_callback_page == NULL) {
           fprintf(stderr, "Error allocating config->test_callback_page, exiting\n");

@@ -313,40 +313,47 @@ int is_client_registration_valid(struct config_elements * config, json_t * j_cli
     }
     
     if (!json_array_size(json_object_get(j_client, "redirect_uris"))) {
+      y_log_message(Y_LOG_LEVEL_ERROR, "is_client_registration_valid - Error redirect_uris empty");
       ret = I_ERROR_PARAM;
       break;
     }
     
     if (0 != o_strcmp(config->test_client_redirect_uri, json_string_value(json_array_get(json_object_get(j_client, "redirect_uris"), 0)))) {
+      y_log_message(Y_LOG_LEVEL_ERROR, "is_client_registration_valid - Error redirect_uris must contain %s as first uri", config->test_client_redirect_uri);
       ret = I_ERROR_PARAM;
       break;
     }
     
     json_array_foreach(json_object_get(j_client, "redirect_uris"), index, j_element) {
-      redirect_uri = json_string_value(j_element);
-      if (0 != o_strncmp(redirect_uri, "http://", 7) && 0 != o_strncmp(redirect_uri, "https://", 8)) {
-        ret = I_ERROR_PARAM;
-      } else {
-        if (0 == o_strncmp(redirect_uri, "http://", 7)) {
-          redirect_uri += 7;
+      if (index) {
+        redirect_uri = json_string_value(j_element);
+        if (0 != o_strncmp(redirect_uri, "http://", 7) && 0 != o_strncmp(redirect_uri, "https://", 8)) {
+          y_log_message(Y_LOG_LEVEL_ERROR, "is_client_registration_valid - Error redirect_uri must start with http:// or https://");
+          ret = I_ERROR_PARAM;
         } else {
-          redirect_uri += 8;
-        }
-        if (o_strchr(redirect_uri, '/') != NULL) {
-          domain = o_strndup(redirect_uri, (o_strchr(redirect_uri, '/')-redirect_uri));
-        } else {
-          domain = o_strdup(redirect_uri);
-        }
-        domain_array = NULL;
-        if ((domain_len = split_string(domain, ".", &domain_array))) {
-          if (0 != o_strncasecmp(domain_array[0], "localhost", 9) && 0 != o_strncmp(domain_array[0], "127.0.0.1", 9)) {
-            ret = I_ERROR_PARAM;
-          } else if (0 != o_strcasecmp(domain_array[domain_len-1], "local")) {
-            ret = I_ERROR_PARAM;
+          if (0 == o_strncmp(redirect_uri, "http://", 7)) {
+            redirect_uri += 7;
+          } else {
+            redirect_uri += 8;
           }
+          if (o_strchr(redirect_uri, '/') != NULL) {
+            domain = o_strndup(redirect_uri, (o_strchr(redirect_uri, '/')-redirect_uri));
+          } else {
+            domain = o_strdup(redirect_uri);
+          }
+          domain_array = NULL;
+          if ((domain_len = split_string(domain, ".", &domain_array))) {
+            if (0 != o_strncasecmp(domain_array[0], "localhost", 9) && 0 != o_strncmp(domain_array[0], "127.0.0.1", 9)) {
+              y_log_message(Y_LOG_LEVEL_ERROR, "is_client_registration_valid - Error redirect_uri must point to localhost or 127.0.0.1");
+              ret = I_ERROR_PARAM;
+            } else if (0 != o_strcasecmp(domain_array[domain_len-1], "local")) {
+              y_log_message(Y_LOG_LEVEL_ERROR, "is_client_registration_valid - Error redirect_uri must point to local domain");
+              ret = I_ERROR_PARAM;
+            }
+          }
+          free_string_array(domain_array);
+          o_free(domain);
         }
-        free_string_array(domain_array);
-        o_free(domain);
       }
     }
   } while (0);

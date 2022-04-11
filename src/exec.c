@@ -319,6 +319,10 @@ json_t * exec_run_auth(struct config_elements * config, const char * session_id,
                                                I_OPT_ERROR, NULL,
                                                I_OPT_ERROR_DESCRIPTION, NULL,
                                                I_OPT_ERROR_URI, NULL,
+                                               I_OPT_REFRESH_TOKEN, NULL,
+                                               I_OPT_ACCESS_TOKEN, NULL,
+                                               I_OPT_ID_TOKEN, NULL,
+                                               I_OPT_CODE, NULL,
                                                I_OPT_NONE) == I_OK) {
             if (i_get_int_parameter(&i_session, I_OPT_AUTH_METHOD) & I_AUTH_METHOD_POST) {
               if (i_run_auth_request(&i_session) == I_OK) {
@@ -541,6 +545,8 @@ json_t * exec_run_token(struct config_elements * config, const char * session_id
                   y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_token - Error exporting request or response");
                   j_return = json_pack("{si}", "result", E_ERROR);
                 }
+                o_free(str_request);
+                o_free(str_response);
               } else {
                 y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_token - Error saving session");
                 j_return = json_pack("{si}", "result", E_ERROR);
@@ -574,6 +580,7 @@ json_t * exec_run_token(struct config_elements * config, const char * session_id
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_token - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -655,6 +662,7 @@ json_t * exec_run_userinfo(struct config_elements * config, const char * session
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_userinfo - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -737,6 +745,7 @@ json_t * exec_run_introspection(struct config_elements * config, const char * se
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_introspection - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -818,6 +827,7 @@ json_t * exec_run_revocation(struct config_elements * config, const char * sessi
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_revocation - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -911,6 +921,7 @@ json_t * exec_run_device_auth(struct config_elements * config, const char * sess
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_device_auth - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -1004,6 +1015,7 @@ json_t * exec_run_ciba_auth(struct config_elements * config, const char * sessio
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_run_ciba_auth - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
   return j_return;
 }
 
@@ -1108,5 +1120,47 @@ json_t * exec_get_ciba_notification(struct config_elements * config, const char 
     y_log_message(Y_LOG_LEVEL_ERROR, "exec_get_ciba_notification - Error exec_get_i_session");
     j_return = json_pack("{si}", "result", E_ERROR);
   }
+  json_decref(j_saved_session);
+  return j_return;
+}
+
+json_t * exec_rar_add(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, const char * type, json_t * j_rar) {
+  json_t * j_saved_session = exec_get_i_session(config, session_id, client_id, p_id), * j_return, * j_session = NULL;
+  struct _i_session i_session;
+  
+  if (check_result_value(j_saved_session, E_OK)) {
+    if (i_init_session(&i_session) == I_OK) {
+      if (i_import_session_json_t(&i_session, json_object_get(j_saved_session, "session")) == I_OK) {
+        if (i_set_rich_authorization_request_json_t(&i_session, type, j_rar) == I_OK) {
+          if ((j_session = i_export_session_json_t(&i_session)) != NULL &&
+              exec_set_i_session(config, session_id, client_id, p_id, j_session, NULL) == E_OK) {
+            j_return = json_pack("{si}", "result", E_OK);
+          } else {
+            y_log_message(Y_LOG_LEVEL_ERROR, "exec_rar_add - Error saving session");
+            j_return = json_pack("{si}", "result", E_ERROR);
+          }
+          json_decref(j_session);
+        } else {
+          y_log_message(Y_LOG_LEVEL_ERROR, "exec_rar_add - Error i_set_rich_authorization_request_json_t");
+          j_return = json_pack("{si}", "result", E_ERROR);
+        }
+      } else {
+        y_log_message(Y_LOG_LEVEL_ERROR, "exec_rar_add - Error i_import_session_json_t");
+        j_return = json_pack("{si}", "result", E_ERROR);
+      }
+      i_clean_session(&i_session);
+    } else {
+      y_log_message(Y_LOG_LEVEL_ERROR, "exec_rar_add - Error i_init_session");
+      j_return = json_pack("{si}", "result", E_ERROR);
+    }
+  } else if (check_result_value(j_saved_session, E_ERROR_UNAUTHORIZED)) {
+    j_return = json_pack("{si}", "result", E_ERROR_UNAUTHORIZED);
+  } else if (check_result_value(j_saved_session, E_ERROR_NOT_FOUND)) {
+    j_return = json_pack("{si}", "result", E_ERROR_NOT_FOUND);
+  } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "exec_rar_add - Error exec_get_i_session");
+    j_return = json_pack("{si}", "result", E_ERROR);
+  }
+  json_decref(j_saved_session);
   return j_return;
 }

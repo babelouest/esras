@@ -170,6 +170,7 @@ json_t * exec_run_device_auth(struct config_elements * config, const char * sess
 json_t * exec_run_ciba_auth(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
 void exec_process_ciba_notification(struct config_elements * config, const char * ciba_auth_req_id, const struct _u_request * request);
 json_t * exec_get_ciba_notification(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id);
+json_t * exec_rar_add(struct config_elements * config, const char * session_id, const char * client_id, json_int_t p_id, const char * type, json_t * j_rar);
 
 int is_client_registration_valid(struct config_elements * config, json_t * j_client);
 json_t * register_client(struct config_elements * config, json_t * j_client);
@@ -208,5 +209,6 @@ int callback_esras_exec_run_device_auth (const struct _u_request * request, stru
 int callback_esras_exec_run_ciba_auth (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data);
 int callback_esras_get_ciba_notification (const struct _u_request * request, struct _u_response * response, void * user_data);
+int callback_esras_rar_add_type (const struct _u_request * request, struct _u_response * response, void * user_data);
 
 #endif

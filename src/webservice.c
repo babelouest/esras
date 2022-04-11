@@ -97,7 +97,7 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
       response->status = 302;
 
       // Uncomment this line if you're working on the frontend
-      y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+      //y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
 
       ret = U_CALLBACK_COMPLETE;
     } else {
@@ -194,6 +194,7 @@ int callback_esras_add_client (const struct _u_request * request, struct _u_resp
     }
     json_decref(j_result);
   } else {
+    y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error client registration invalid");
     response->status = 400;
   }
   json_decref(j_client);
@@ -571,5 +572,25 @@ int callback_esras_get_ciba_notification (const struct _u_request * request, str
   }
   json_decref(j_result);
 
+  return U_CALLBACK_CONTINUE;
+}
+
+int callback_esras_rar_add_type (const struct _u_request * request, struct _u_response * response, void * user_data) {
+  struct config_elements * config = (struct config_elements *)user_data;
+  json_t * j_rar = ulfius_get_json_body_request(request, NULL), * j_result;
+  
+  if (json_is_object(j_rar)) {
+    j_result = exec_rar_add(config, u_map_get(request->map_cookie, config->session_key), u_map_get(request->map_url, "client_id"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id")), u_map_get(request->map_url, "type"), j_rar);
+    if (check_result_value(j_result, E_ERROR_PARAM)) {
+      response->status = 400;
+    } else if (!check_result_value(j_result, E_OK)) {
+      y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_get_ciba_notification - Error exec_rar_add");
+      response->status = 500;
+    }
+    json_decref(j_result);
+  } else {
+    response->status = 400;
+  }
+  json_decref(j_rar);
   return U_CALLBACK_CONTINUE;
 }
