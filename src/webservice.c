@@ -54,7 +54,7 @@ int callback_esras_options (const struct _u_request * request, struct _u_respons
   UNUSED(user_data);
   ulfius_set_response_properties(response, U_OPT_STATUS, 200,
                                            U_OPT_HEADER_PARAMETER, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS",
-                                           U_OPT_HEADER_PARAMETER, "Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Bearer, Authorization",
+                                           U_OPT_HEADER_PARAMETER, "Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Bearer, Authorization, DPoP",
                                            U_OPT_HEADER_PARAMETER, "Access-Control-Max-Age", "1800",
                                            U_OPT_NONE);
   return U_CALLBACK_COMPLETE;
@@ -92,13 +92,14 @@ int callback_esras_check_session (const struct _u_request * request, struct _u_r
   if (check_result_value(j_session, E_ERROR_UNAUTHORIZED) || check_result_value(j_session, E_ERROR_NOT_FOUND)) {
     j_result = init_session(config, u_map_get(request->map_cookie, config->session_key), check_result_value(j_session, E_ERROR_NOT_FOUND));
     if (check_result_value(j_result, E_OK)) {
+      if (0 == o_strcmp("XMLHttpRequest", u_map_get_case(request->map_header, "x-requested-with"))) {
+        ulfius_set_string_body_response(response, 401, json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+      } else {
+        u_map_put(response->map_header, "Location", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
+        response->status = 302;
+      }
+
       ulfius_add_cookie_to_response(response, config->session_key, json_string_value(json_object_get(json_object_get(j_result, "session"), "session_id")), expires, 0, config->cookie_domain, "/", config->cookie_secure, 0);
-      u_map_put(response->map_header, "Location", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
-      response->status = 302;
-
-      // Uncomment this line if you're working on the frontend
-      //y_log_message(Y_LOG_LEVEL_DEBUG, "redirect %s", json_string_value(json_object_get(json_object_get(j_result, "session"), "auth_url")));
-
       ret = U_CALLBACK_COMPLETE;
     } else {
       y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_check_session - Error init_session");
@@ -185,6 +186,8 @@ int callback_esras_add_client (const struct _u_request * request, struct _u_resp
       if (add_client(config, json_object_get(j_result, "registration"), json_integer_value(json_object_get((json_t *)response->shared_data, "p_id"))) != E_OK) {
         y_log_message(Y_LOG_LEVEL_ERROR, "callback_esras_add_client - Error add_client");
         response->status = 500;
+      } else {
+        y_log_message(Y_LOG_LEVEL_INFO, "Client '%s' added by user '%s' (%s)", json_string_value(json_object_get(json_object_get(j_result, "registration"), "client_id")), json_string_value(json_object_get((json_t *)response->shared_data, "name")), json_string_value(json_object_get((json_t *)response->shared_data, "sub")));
       }
     } else if (check_result_value(j_result, E_ERROR_PARAM)) {
       response->status = 400;

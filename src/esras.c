@@ -201,7 +201,9 @@ int main (int argc, char ** argv) {
   ulfius_add_endpoint_by_val(config->instance, "POST", config->api_prefix, "/exec/rar/:client_id/:type", ESRAS_CALLBACK_PRIORITY_APPLICATION, &callback_esras_rar_add_type, config);
 
   // Other endpoints
-  ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
+  if (config->static_file_config->files_path != NULL) {
+    ulfius_add_endpoint_by_val(config->instance, "GET", config->static_file_config->url_prefix, "*", ESRAS_CALLBACK_PRIORITY_FILE, &callback_static_compressed_inmemory_website, (void*)config->static_file_config);
+  }
   ulfius_add_endpoint_by_val(config->instance, "OPTIONS", NULL, "*", ESRAS_CALLBACK_PRIORITY_ZERO, &callback_esras_options, (void*)config);
   ulfius_add_endpoint_by_val(config->instance, "*", config->api_prefix, "*", ESRAS_CALLBACK_PRIORITY_COMPRESSION, &callback_http_compression, NULL);
   ulfius_add_endpoint_by_val(config->instance, "GET", NULL, "*", ESRAS_CALLBACK_PRIORITY_POST_FILE, &callback_404_if_necessary, NULL);
