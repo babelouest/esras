@@ -27,6 +27,7 @@ class APIManager {
 		})
     .fail((err) => {
       if (err.status === 401) {
+        document.location = err.responseText;
       }
     });
 	}
