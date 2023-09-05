@@ -2,26 +2,26 @@
  *
  * Response body compression callback function for Ulfius Framework
  *
- * Copyright 2020 Nicolas Mora <mail@babelouest.org>
+ * Copyright 2020-2022 Nicolas Mora <mail@babelouest.org>
  *
- * Version 20201213
+ * Version 20221024
  *
  * Compress the response body using `deflate` or `gzip` depending on the request header `Accept-Encoding` and the callback configuration.
  * The rest of the response, status, headers, cookies won't change.
  * After compressing response body, the response header Content-Encoding will be set accordingly.
  *
  * The MIT License (MIT)
- *
+ * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- *
+ * 
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
- *
+ * 
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -29,12 +29,12 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
+ * 
  */
 
-#include <zlib.h>
 #include <string.h>
 #include <ulfius.h>
+#include <zlib.h>
 
 #include "http_compression_callback.h"
 
@@ -87,8 +87,8 @@ int callback_http_compression (const struct _u_request * request, struct _u_resp
         defstream.next_in = (Bytef *)response->binary_body;
 
         if (compress_mode == U_COMPRESS_GZIP) {
-          if (deflateInit2(&defstream,
-                           Z_BEST_COMPRESSION,
+          if (deflateInit2(&defstream, 
+                           Z_BEST_COMPRESSION, 
                            Z_DEFLATED,
                            U_GZIP_WINDOW_BITS | U_GZIP_ENCODING,
                            8,
@@ -125,7 +125,7 @@ int callback_http_compression (const struct _u_request * request, struct _u_resp
           } while (U_CALLBACK_IGNORE == ret && defstream.avail_out == 0);
 
           if (ret == U_CALLBACK_IGNORE) {
-            ulfius_set_binary_body_response(response, response->status, (const char *)data_zip, defstream.total_out);
+            ulfius_set_binary_body_response(response, (unsigned int)response->status, (const char *)data_zip, defstream.total_out);
             u_map_put(response->map_header, U_CONTENT_HEADER, compress_mode==U_COMPRESS_GZIP?U_ACCEPT_GZIP:U_ACCEPT_DEFLATE);
           }
           deflateEnd(&defstream);
